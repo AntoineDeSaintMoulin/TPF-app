@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { initialAssetManagers, initialFunds, initialFundReports, initialAnalystOverrides } from "./_data";
+import { initialAssetManagers, initialFunds, initialFundReports, initialAnalystOverrides } from "./_data.js";
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Méthode non autorisée" });

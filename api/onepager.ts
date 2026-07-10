@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { GoogleGenAI } from "@google/genai";
-import { initialAssetManagers, initialFunds, initialFundReports, initialAnalystOverrides } from "./_data";
+import { initialAssetManagers, initialFunds, initialFundReports, initialAnalystOverrides } from "./_data.js";
 
 let ai: GoogleGenAI | null = null;
 if (process.env.TPF_AI_KEY) {

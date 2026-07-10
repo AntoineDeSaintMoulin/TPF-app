@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { initialFunds, initialAssignmentRules } from "./_data";
+import { initialFunds, initialAssignmentRules } from "./_data.js";
 
 // ⚠️ Ces modifications ne persistent PAS entre deux appels dans cet environnement
 // serverless (pas de vraie base de données branchée). Voir la note dans _data.ts.
