@@ -1,0 +1,6 @@
+{
+  "name": "Asset Management Intelligence Portal",
+  "description": "Portail d'intelligence augmentée pour la centralisation, la structuration et l'analyse de fonds d'investissement (Gmail + Gemini API).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
