@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getGmailClient, extractPlainTextBody, getHeader } from "./_gmail.js";
 import { runExtraction } from "./_extract-logic.js";
+import { saveExtractedReport } from "./_persist.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Sécurise l'endpoint : seul le Cron Job Vercel (ou toi manuellement avec le bon secret) peut le déclencher
   const authHeader = req.headers.authorization;
   if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: "Non autorisé" });
@@ -12,7 +12,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const gmail = getGmailClient();
 
-    // 1. Récupère les emails non lus dans la boîte de réception
     const listRes = await gmail.users.messages.list({
       userId: "me",
       q: "is:unread in:inbox",
@@ -25,7 +24,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (const msg of messages) {
       if (!msg.id) continue;
 
-      // 2. Récupère le contenu complet de chaque email
       const fullMsg = await gmail.users.messages.get({
         userId: "me",
         id: msg.id,
@@ -41,7 +39,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         continue;
       }
 
-      // 3. Passe l'email dans la même logique d'extraction IA que /api/extract
       let extraction;
       try {
         extraction = await runExtraction(subject, body);
@@ -50,7 +47,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         continue;
       }
 
-      // 4. Marque l'email comme lu pour ne pas le retraiter au prochain cycle
+      // Persiste en base si ce n'est pas du bruit
+      if (!extraction.raw_extraction.is_noise) {
+        try {
+          await saveExtractedReport(extraction.raw_extraction, subject, body);
+        } catch (err: any) {
+          results.push({ id: msg.id, subject, status: "save_failed", error: err.message });
+          continue;
+        }
+      }
+
+      // Marque l'email comme lu pour ne pas le retraiter au prochain cycle
       await gmail.users.messages.modify({
         userId: "me",
         id: msg.id,

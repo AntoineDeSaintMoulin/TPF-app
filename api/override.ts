@@ -1,18 +1,31 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { initialAnalystOverrides } from "./_data.js";
+import { getDb } from "./_db.js";
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Méthode non autorisée" });
 
+  const sql = getDb();
   const { fundId, positioningOverride, analystComment } = req.body;
-  const index = initialAnalystOverrides.findIndex((o) => o.fundId === fundId);
   const now = new Date().toISOString();
 
-  if (index >= 0) {
-    initialAnalystOverrides[index] = { fundId, positioningOverride, analystComment, updatedAt: now };
-  } else {
-    initialAnalystOverrides.push({ fundId, positioningOverride, analystComment, updatedAt: now });
-  }
+  try {
+    await sql`
+      INSERT INTO analyst_overrides (fund_id, positioning_override, analyst_comment, updated_at)
+      VALUES (${fundId}, ${positioningOverride}, ${analystComment}, ${now})
+      ON CONFLICT (fund_id) DO UPDATE SET
+        positioning_override = EXCLUDED.positioning_override,
+        analyst_comment = EXCLUDED.analyst_comment,
+        updated_at = EXCLUDED.updated_at
+    `;
 
-  res.status(200).json({ success: true, analystOverrides: initialAnalystOverrides });
+    const analystOverrides = await sql`
+      SELECT fund_id AS "fundId", positioning_override AS "positioningOverride", analyst_comment AS "analystComment", updated_at AS "updatedAt"
+      FROM analyst_overrides
+    `;
+
+    res.status(200).json({ success: true, analystOverrides });
+  } catch (error: any) {
+    console.error("Override error:", error);
+    res.status(500).json({ error: error.message || "Erreur lors de la sauvegarde" });
+  }
 }

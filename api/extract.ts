@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { runExtraction } from "./_extract-logic.js";
+import { saveExtractedReport } from "./_persist.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
@@ -14,6 +15,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const result = await runExtraction(emailSubject, emailText);
+
+    if (!result.raw_extraction.is_noise) {
+      await saveExtractedReport(result.raw_extraction, emailSubject || "Extraction manuelle", emailText);
+    }
+
     res.status(200).json(result);
   } catch (error: any) {
     console.error("Extraction Error:", error);
