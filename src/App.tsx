@@ -266,6 +266,28 @@ export default function App() {
     }
   };
 
+  // Quick inline reassignment directly from a fund card (dashboard)
+  const handleQuickReassign = async (fundId: string, newAnalystId: string) => {
+    // Optimistic UI update so the dropdown feels instant
+    setPortalData(prev =>
+      prev ? { ...prev, funds: prev.funds.map(f => f.id === fundId ? { ...f, analystId: newAnalystId } : f) } : prev
+    );
+    try {
+      const res = await fetch("/api/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fundId, analystId: newAnalystId })
+      });
+      const json = await res.json();
+      if (json.success) {
+        setPortalData(prev => prev ? { ...prev, funds: json.funds, assignmentRules: json.assignmentRules } : prev);
+      }
+    } catch (err) {
+      console.error("Error during quick reassignment:", err);
+    }
+  };
+
+
   // Reset demo dataset
   const handleResetData = async () => {
     if (confirm("Réinitialiser toutes les données de simulation par défaut ?")) {
@@ -429,7 +451,7 @@ export default function App() {
                 { id: "dashboard", label: "📊 Tableau de Bord", desc: "Suivi à 3 niveaux" },
                 { id: "ingestion", label: "📥 Ingestion & Playground", desc: "Tester Gemini" },
                 { id: "schema", label: "🗄️ Schéma BDD & Flux", desc: "Architecture" },
-                { id: "resources", label: "👤 Portefeuille par Analyste", desc: "Fonds suivis" }
+                { id: "resources", label: "👤 Fonds par Analyste", desc: "Fonds suivis" }
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -613,31 +635,27 @@ export default function App() {
                             </button>
 
                             {/* Analyst assignment row */}
-                            <div className="flex items-center justify-between border-t border-white/5 pt-2.5">
-                              <div className="flex items-center gap-1.5">
-                                <User className="h-3 w-3 text-gray-500" />
-                                <span className={`text-[10px] font-medium ${fund.analystId === "Unknown" ? "text-amber-400" : "text-gray-400"}`}>
-                                  {fund.analystId === "Unknown" ? "Unknown (Non affecté) ⚠️" : fund.analystId}
-                                </span>
+                            <div className="flex items-center justify-between gap-2 border-t border-white/5 pt-2.5" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                <User className="h-3 w-3 text-gray-500 shrink-0" />
+                                <select
+                                  value={fund.analystId}
+                                  onChange={(e) => handleQuickReassign(fund.id, e.target.value)}
+                                  className={`text-[10px] font-medium bg-transparent border border-white/10 rounded px-1.5 py-0.5 cursor-pointer focus:outline-none focus:border-indigo-500/50 hover:border-white/20 transition-colors ${
+                                    fund.analystId === "Unknown" ? "text-amber-400" : "text-gray-300"
+                                  }`}
+                                >
+                                  <option value="Unknown" className="bg-[#0b0e14] text-amber-400">Non affecté ⚠️</option>
+                                  {teamAnalysts.map(name => (
+                                    <option key={name} value={name} className="bg-[#0b0e14] text-gray-200">{name}</option>
+                                  ))}
+                                </select>
                               </div>
 
-                              {fund.analystId === "Unknown" ? (
-                                <button
-                                  onClick={() => {
-                                    setAssignmentFundId(fund.id);
-                                    setAssignmentPattern(fund.name.split(" ")[0] || "");
-                                    setAssignmentAnalystId("Damien");
-                                  }}
-                                  className="text-[9px] bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-bold px-2 py-1 rounded border border-amber-500/20 transition-colors cursor-pointer animate-pulse"
-                                >
-                                  Affecter
-                                </button>
-                              ) : (
-                                hasOverride && (
-                                  <span className="text-[9px] bg-emerald-500/10 text-emerald-300 font-semibold px-1.5 py-0.5 rounded border border-emerald-500/20">
-                                    Corrigé 👤
-                                  </span>
-                                )
+                              {hasOverride && (
+                                <span className="shrink-0 text-[9px] bg-emerald-500/10 text-emerald-300 font-semibold px-1.5 py-0.5 rounded border border-emerald-500/20">
+                                  Corrigé 👤
+                                </span>
                               )}
                             </div>
                           </div>
