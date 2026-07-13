@@ -287,6 +287,46 @@ export default function App() {
     }
   };
 
+  // Delete a single fund (and its reports/overrides) directly from the dashboard
+  const handleDeleteFund = async (fundId: string, fundName: string) => {
+    if (!confirm(`Supprimer définitivement le fonds "${fundName}" et tous ses rapports associés ?`)) return;
+    try {
+      const res = await fetch("/api/manage-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete_fund", id: fundId })
+      });
+      const json = await res.json();
+      if (json.success) {
+        setPortalData(json);
+        if (selectedFundId === fundId) setSelectedFundId(null);
+      }
+    } catch (err) {
+      console.error("Error deleting fund:", err);
+    }
+  };
+
+  // Wipe the entire database (all managers, funds, reports, overrides)
+  const handleWipeAllData = async () => {
+    if (!confirm("⚠️ Ceci va supprimer DÉFINITIVEMENT toutes les données (gérants, fonds, rapports). Continuer ?")) return;
+    if (!confirm("Dernière confirmation : voulez-vous vraiment tout effacer ?")) return;
+    try {
+      const res = await fetch("/api/manage-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "wipe_all" })
+      });
+      const json = await res.json();
+      if (json.success) {
+        setPortalData(json);
+        setSelectedFundId(null);
+      }
+    } catch (err) {
+      console.error("Error wiping data:", err);
+    }
+  };
+
+
 
   // Reset demo dataset
   const handleResetData = async () => {
@@ -431,10 +471,19 @@ export default function App() {
               {/* Reset simulator data button */}
               <button 
                 onClick={handleResetData}
-                title="Réinitialiser toutes les simulations"
+                title="Réinitialiser aux données de démonstration"
                 className="bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white p-1.5 rounded-lg border border-white/10 transition-colors"
               >
                 <RefreshCw className="h-4 w-4" />
+              </button>
+
+              {/* Wipe all data button */}
+              <button
+                onClick={handleWipeAllData}
+                title="Vider toute la base de données"
+                className="bg-red-950/20 hover:bg-red-950/40 text-red-400 hover:text-red-300 p-1.5 rounded-lg border border-red-500/20 hover:border-red-500/30 transition-colors"
+              >
+                <Trash2 className="h-4 w-4" />
               </button>
             </div>
 
@@ -652,11 +701,20 @@ export default function App() {
                                 </select>
                               </div>
 
-                              {hasOverride && (
-                                <span className="shrink-0 text-[9px] bg-emerald-500/10 text-emerald-300 font-semibold px-1.5 py-0.5 rounded border border-emerald-500/20">
-                                  Corrigé 👤
-                                </span>
-                              )}
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {hasOverride && (
+                                  <span className="text-[9px] bg-emerald-500/10 text-emerald-300 font-semibold px-1.5 py-0.5 rounded border border-emerald-500/20">
+                                    Corrigé 👤
+                                  </span>
+                                )}
+                                <button
+                                  onClick={() => handleDeleteFund(fund.id, fund.name)}
+                                  title="Supprimer ce fonds"
+                                  className="text-gray-600 hover:text-red-400 transition-colors p-0.5 cursor-pointer"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
                             </div>
                           </div>
                         </div>
