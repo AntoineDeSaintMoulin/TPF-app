@@ -425,7 +425,7 @@ export default function App() {
     setSyncingGmail(true);
     setSyncFeedback(null);
     try {
-      const res = await fetch("/api/manual-sync", { method: "GET" });
+      const res = await fetch("/api/gmail-sync", { method: "GET" });
       const json = await res.json();
       if (json.success) {
         setSyncFeedback(
