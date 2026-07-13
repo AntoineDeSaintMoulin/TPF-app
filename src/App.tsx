@@ -97,7 +97,7 @@ export default function App() {
   const [overrideFeedback, setOverrideFeedback] = useState(false);
 
   // Ingest playground fields
-  const [selectedMockEmailId, setSelectedMockEmailId] = useState("email-1");
+  const [selectedMockEmailId, setSelectedMockEmailId] = useState<string | null>(null);
   const [emailSubject, setEmailSubject] = useState("");
   const [emailText, setEmailText] = useState("");
   const [extracting, setExtracting] = useState(false);
@@ -156,8 +156,9 @@ export default function App() {
     }
   }, [selectedFundId, portalData]);
 
-  // Load selected mock email text
+  // Load selected mock email text (only when the user explicitly picks one)
   useEffect(() => {
+    if (!selectedMockEmailId) return;
     const email = mockEmails.find(e => e.id === selectedMockEmailId);
     if (email) {
       setEmailSubject(email.subject);
@@ -211,6 +212,14 @@ export default function App() {
       }
 
       setExtractionResult(data);
+
+      // Auto-fill the subject field from what the AI detected, if it was left empty
+      if (!emailSubject.trim() && data.raw_extraction) {
+        const { asset_manager, fund_name } = data.raw_extraction;
+        const autoSubject = [asset_manager, fund_name].filter((v) => v && v !== "N/A").join(" - ");
+        if (autoSubject) setEmailSubject(autoSubject);
+      }
+
       // reload dataset to display extracted funds instantly in the dashboard
       await fetchData();
     } catch (err) {
@@ -560,7 +569,7 @@ export default function App() {
             <div className="flex space-x-1 sm:space-x-2 overflow-x-auto py-1">
               {[
                 { id: "dashboard", label: "📊 Tableau de Bord", desc: "Suivi à 3 niveaux" },
-                { id: "ingestion", label: "📥 Ingestion & Playground", desc: "Tester Gemini" },
+                { id: "ingestion", label: "📥 Ingestion", desc: "Tester Gemini" },
                 { id: "schema", label: "🗄️ Schéma BDD & Flux", desc: "Architecture" },
                 { id: "resources", label: "👤 Fonds par Analyste", desc: "Fonds suivis" }
               ].map(tab => (
