@@ -124,6 +124,9 @@ export default function App() {
 
   const teamAnalysts = ["Damien", "Maxime", "Benoit", "Antoine"];
 
+  // Whether the server has a real Gemini API key configured (checked via /api/status)
+  const [aiConfigured, setAiConfigured] = useState<boolean>(false);
+
   // Load Data
   const fetchData = async () => {
     try {
@@ -138,6 +141,10 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
+    fetch("/api/status")
+      .then((res) => res.json())
+      .then((data) => setAiConfigured(!!data.aiConfigured))
+      .catch(() => setAiConfigured(false));
   }, []);
 
   // Update Form overrides when selected fund changes
@@ -580,7 +587,7 @@ export default function App() {
                 </div>
               )}
               <div className="text-[11px] text-gray-500 font-medium">
-                {process.env.GEMINI_API_KEY ? (
+                {aiConfigured ? (
                   <span className="flex items-center gap-1 text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
                     Gemini Live connecté
