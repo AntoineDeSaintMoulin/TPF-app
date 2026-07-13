@@ -26,7 +26,7 @@ function SVGLineChart({ data, title, unit, colorClass = "indigo" }: { data: { la
   const maxVal = Math.max(...values) * 1.08;
   const valRange = maxVal - minVal === 0 ? 1 : maxVal - minVal;
 
-  const getX = (index: number) => padding + (index / (data.length - 1)) * xMax;
+  const getX = (index: number) => data.length <= 1 ? padding + xMax / 2 : padding + (index / (data.length - 1)) * xMax;
   const getY = (val: number) => height - padding - ((val - minVal) / valRange) * yMax;
 
   const points = data.map((d, i) => `${getX(i)},${getY(d.value)}`).join(" ");
@@ -101,6 +101,7 @@ export default function App() {
   const [emailSubject, setEmailSubject] = useState("");
   const [emailText, setEmailText] = useState("");
   const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
   const [importingFile, setImportingFile] = useState(false);
   const [importedFileName, setImportedFileName] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -188,6 +189,7 @@ export default function App() {
   const handleExtract = async () => {
     setExtracting(true);
     setExtractionResult(null);
+    setExtractError(null);
     try {
       const res = await fetch("/api/extract", {
         method: "POST",
@@ -195,11 +197,18 @@ export default function App() {
         body: JSON.stringify({ emailSubject, emailText })
       });
       const data = await res.json();
+
+      if (!res.ok || !data.raw_extraction) {
+        setExtractError(data.error || "Erreur inconnue lors de l'extraction. Le document est peut-être trop long ou mal formaté.");
+        return;
+      }
+
       setExtractionResult(data);
       // reload dataset to display extracted funds instantly in the dashboard
       await fetchData();
     } catch (err) {
       console.error("Error running Gemini extraction:", err);
+      setExtractError("Impossible de contacter le serveur d'extraction. Vérifiez votre connexion et réessayez.");
     } finally {
       setExtracting(false);
     }
@@ -1137,8 +1146,20 @@ export default function App() {
                   </div>
                 )}
 
+                {/* Extraction error display */}
+                {extractError && !extracting && (
+                  <div className="bg-red-950/20 rounded-xl border border-red-500/30 p-6 text-center space-y-2 shadow-lg">
+                    <AlertTriangle className="h-8 w-8 text-red-400 mx-auto" />
+                    <h3 className="text-sm font-bold text-red-300">Échec de l'extraction</h3>
+                    <p className="text-xs text-red-200/80 max-w-md mx-auto">{extractError}</p>
+                    <p className="text-[10px] text-gray-500 mt-2">
+                      Astuce : si le document est très long, essayez de réduire le texte collé ou de ne garder que les sections pertinentes.
+                    </p>
+                  </div>
+                )}
+
                 {/* Empty state when no extraction is run */}
-                {!extractionResult && !extracting && (
+                {!extractionResult && !extracting && !extractError && (
                   <div className="bg-[#0b0e14] rounded-xl border border-white/5 p-12 text-center space-y-3 shadow-lg">
                     <div className="bg-indigo-500/10 h-12 w-12 rounded-full flex items-center justify-center mx-auto text-indigo-400">
                       <Database className="h-6 w-6" />

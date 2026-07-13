@@ -8,9 +8,16 @@ if (process.env.TPF_AI_Key) {
   });
 }
 
+// Limite de sécurité pour éviter de dépasser les capacités du modèle sur de très longs documents
+const MAX_TEXT_LENGTH = 25000;
+
 export async function runExtraction(emailSubject: string, emailText: string) {
+  const safeText = emailText.length > MAX_TEXT_LENGTH
+    ? emailText.slice(0, MAX_TEXT_LENGTH) + "\n\n[...texte tronqué car trop long...]"
+    : emailText;
+
   if (!ai) {
-    const textLower = emailText.toLowerCase();
+    const textLower = safeText.toLowerCase();
 
     if (textLower.includes("webinaire") || textLower.includes("newsletter d'été") || textLower.includes("offre d'abonnement")) {
       return {
@@ -84,14 +91,29 @@ Strict filtering guidelines:
 2. FUND UPDATES: Emails/documents with actual key views, fund positioning, or figures (AUM, cash rate, performance) must have is_noise = false.
 3. EMERGENCY DETECTION: Tag with is_emergency = true if there is an alert like "départ de gérant" (manager departure), "hard close", or "process change". Be highly sensitive to these risk factors.`;
 
-  const userPrompt = `Subject: ${emailSubject || "No Subject"}\n\nEmail Text:\n${emailText}`;
+  const userPrompt = `Subject: ${emailSubject || "No Subject"}\n\nEmail Text:\n${safeText}`;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3.5-flash",
-    contents: userPrompt,
-    config: { systemInstruction, responseMimeType: "application/json", responseSchema, temperature: 0.1 },
-  });
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: userPrompt,
+      config: { systemInstruction, responseMimeType: "application/json", responseSchema, temperature: 0.1 },
+    });
+  } catch (err: any) {
+    throw new Error(`Erreur lors de l'appel à Gemini : ${err.message || "erreur inconnue"}`);
+  }
 
-  const parsedData = JSON.parse(response.text.trim());
+  if (!response.text) {
+    throw new Error("Gemini n'a renvoyé aucun contenu exploitable pour ce document.");
+  }
+
+  let parsedData;
+  try {
+    parsedData = JSON.parse(response.text.trim());
+  } catch (err) {
+    throw new Error("La réponse de Gemini n'était pas un JSON valide (le document est peut-être trop complexe ou mal structuré).");
+  }
+
   return { raw_extraction: parsedData, api_mocked: false };
 }
