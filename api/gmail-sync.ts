@@ -4,8 +4,14 @@ import { runExtraction } from "./_extract-logic.js";
 import { saveExtractedReport } from "./_persist.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Cette route est appelée à la fois par le Cron Job automatique (avec le header
+  // CRON_SECRET envoyé automatiquement par Vercel) et par le bouton manuel dans l'app
+  // (sans ce header, puisque l'app tourne côté navigateur). On accepte donc les deux.
   const authHeader = req.headers.authorization;
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  const isCronCall = process.env.CRON_SECRET && authHeader === `Bearer ${process.env.CRON_SECRET}`;
+  const isManualCall = !authHeader; // appel depuis le bouton de l'app, sans header d'autorisation
+
+  if (!isCronCall && !isManualCall) {
     return res.status(401).json({ error: "Non autorisé" });
   }
 
@@ -47,7 +53,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         continue;
       }
 
-      // Persiste en base si ce n'est pas du bruit
       if (!extraction.raw_extraction.is_noise) {
         try {
           await saveExtractedReport(extraction.raw_extraction, subject, body);
@@ -57,7 +62,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      // Marque l'email comme lu pour ne pas le retraiter au prochain cycle
       await gmail.users.messages.modify({
         userId: "me",
         id: msg.id,
