@@ -6,7 +6,7 @@ import {
   Printer, Check, Edit3, HelpCircle, UserX
 } from "lucide-react";
 import SchemaAndArch from "./components/SchemaAndArch";
-import ResourcesPortal from "./components/ResourcesPortal";
+import AnalystPortal from "./components/AnalystPortal";
 import { mockEmails, MockEmail } from "./data/mockEmails";
 import { PortalData, PortalTab, AssetManager, Fund, FundReport, AnalystOverride, AssignmentRule } from "./types";
 
@@ -429,7 +429,7 @@ export default function App() {
                 { id: "dashboard", label: "📊 Tableau de Bord", desc: "Suivi à 3 niveaux" },
                 { id: "ingestion", label: "📥 Ingestion & Playground", desc: "Tester Gemini" },
                 { id: "schema", label: "🗄️ Schéma BDD & Flux", desc: "Architecture" },
-                { id: "resources", label: "🐍 Code & Prompts Portal", desc: "Python Streamlit" }
+                { id: "resources", label: "👤 Portefeuille par Analyste", desc: "Fonds suivis" }
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -1139,8 +1139,8 @@ export default function App() {
         )}
 
         {/* --- TAB D: DEVELOPER RESOURCES --- */}
-        {activeTab === "resources" && (
-          <ResourcesPortal />
+        {activeTab === "resources" && portalData && (
+          <AnalystPortal portalData={portalData} />
         )}
 
       </main>
