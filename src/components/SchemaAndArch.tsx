@@ -1,7 +1,12 @@
 import React, { useState } from "react";
-import { Database, GitFork, Copy, Check, FileCode, Server, Shield, Share2 } from "lucide-react";
+import { Database, GitFork, Copy, Check, FileCode, Server, Shield, Share2, Clock, Mail, FileText, AlertTriangle } from "lucide-react";
+import { PortalData } from "../types";
 
-export default function SchemaAndArch() {
+interface SchemaAndArchProps {
+  portalData?: PortalData | null;
+}
+
+export default function SchemaAndArch({ portalData }: SchemaAndArchProps) {
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
   const handleCopy = (text: string, label: string) => {
@@ -86,6 +91,72 @@ CREATE INDEX idx_funds_manager ON funds(manager_id);
           Voici la modélisation complète du système pour votre équipe d'analystes. Ce socle assure 
           l'historisation rigoureuse de la donnée, l'arbitrage manuel, et le traitement intelligent par IA.
         </p>
+      </div>
+
+      {/* Recent ingestion history */}
+      <div className="bg-[#0b0e14] rounded-xl border border-white/10 p-6 shadow-xl">
+        <h3 className="font-semibold text-white flex items-center gap-2 mb-4">
+          <Clock className="h-4 w-4 text-indigo-400" />
+          Historique des 5 derniers documents ingérés
+        </h3>
+
+        {(() => {
+          const recent = (portalData?.fundReports || [])
+            .filter((r) => r.extractedByAi)
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            .slice(0, 5);
+
+          if (recent.length === 0) {
+            return (
+              <p className="text-xs text-gray-500 italic py-6 text-center">
+                Aucun document n'a encore été ingéré par l'IA.
+              </p>
+            );
+          }
+
+          return (
+            <div className="space-y-2">
+              {recent.map((report) => {
+                const fund = portalData?.funds.find((f) => f.id === report.fundId);
+                const isEmail = !!report.rawEmailBody;
+                return (
+                  <div
+                    key={report.id}
+                    className={`flex items-start gap-3 p-3 rounded-lg border ${
+                      report.urgencyLevel === "Prioritaire"
+                        ? "bg-red-950/10 border-red-500/20"
+                        : "bg-[#050608] border-white/5"
+                    }`}
+                  >
+                    <div className="mt-0.5 shrink-0">
+                      {isEmail ? (
+                        <Mail className="h-4 w-4 text-indigo-400" />
+                      ) : (
+                        <FileText className="h-4 w-4 text-indigo-400" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-semibold text-white truncate">
+                          {report.rawEmailSubject || "Document sans sujet"}
+                        </p>
+                        {report.urgencyLevel === "Prioritaire" && (
+                          <span className="shrink-0 flex items-center gap-1 text-[9px] font-bold bg-red-500/15 text-red-300 px-1.5 py-0.5 rounded-full border border-red-500/30">
+                            <AlertTriangle className="h-2.5 w-2.5" />
+                            Prioritaire
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-gray-500 mt-0.5">
+                        {fund ? fund.name : "Fonds non identifié"} · {new Date(report.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Grid of Architecture Visual & Explanation */}

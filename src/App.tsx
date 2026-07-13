@@ -1296,7 +1296,7 @@ export default function App() {
 
         {/* --- TAB C: DATABASE SCHEMA & FLOW --- */}
         {activeTab === "schema" && (
-          <SchemaAndArch />
+          <SchemaAndArch portalData={portalData} />
         )}
 
         {/* --- TAB D: DEVELOPER RESOURCES --- */}
