@@ -1009,44 +1009,10 @@ export default function App() {
               <div className="lg:col-span-5 bg-[#0b0e14] rounded-xl border border-white/5 p-5 shadow-lg flex flex-col justify-between">
                 <div className="space-y-4">
                   
-                  {/* Select preset samples */}
-                  <div className="space-y-2">
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
-                      1. Sélectionner un exemple d'e-mail reçu
-                    </label>
-                    <div className="grid grid-cols-1 gap-2">
-                      {mockEmails.map((email) => (
-                        <button
-                          key={email.id}
-                          onClick={() => {
-                            setSelectedMockEmailId(email.id);
-                            setExtractionResult(null);
-                          }}
-                          className={`w-full text-left p-3 rounded-lg border transition-all text-xs flex items-center justify-between cursor-pointer ${
-                            selectedMockEmailId === email.id
-                              ? "bg-indigo-600/10 border-indigo-500/30 font-semibold text-white shadow-[0_0_10px_rgba(99,102,241,0.05)]"
-                              : "bg-[#050608] border-white/5 hover:border-white/10 hover:bg-[#050608]/80 text-gray-300"
-                          }`}
-                        >
-                          <span className="truncate">{email.title}</span>
-                          <span className={`text-[9px] px-2 py-0.5 rounded font-bold uppercase shrink-0 ${
-                            email.type === "emergency" 
-                              ? "bg-red-500/10 text-red-400 border border-red-500/20"
-                              : email.type === "noise"
-                              ? "bg-white/5 text-gray-400 border border-white/5"
-                              : "bg-indigo-500/10 text-indigo-300 border border-indigo-500/20"
-                          }`}>
-                            {email.type}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
                   {/* Real file import: PDF, email export (.eml), or plain text */}
                   <div className="space-y-2">
                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
-                      2. Ou importer un fichier réel (PDF, .eml, .txt)
+                      1. Importer un fichier réel (PDF, .eml, .txt)
                     </label>
                     <label
                       htmlFor="real-file-import"
