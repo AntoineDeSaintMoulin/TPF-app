@@ -101,6 +101,9 @@ export default function App() {
   const [emailSubject, setEmailSubject] = useState("");
   const [emailText, setEmailText] = useState("");
   const [extracting, setExtracting] = useState(false);
+  const [importingFile, setImportingFile] = useState(false);
+  const [importedFileName, setImportedFileName] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const [extractionResult, setExtractionResult] = useState<any | null>(null);
 
   // Multi-Gérant Synthesis Modal
@@ -199,6 +202,49 @@ export default function App() {
       console.error("Error running Gemini extraction:", err);
     } finally {
       setExtracting(false);
+    }
+  };
+
+  // Import a real file (PDF or plain text/email) and populate the text area
+  const handleFileImport = async (file: File) => {
+    setImportError(null);
+    setImportingFile(true);
+    setExtractionResult(null);
+    try {
+      if (!emailSubject) setEmailSubject(file.name.replace(/\.[^.]+$/, ""));
+
+      if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+        // Read the PDF as base64 then send it to the server for text extraction
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve(result.split(",")[1] || "");
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+        const res = await fetch("/api/parse-pdf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileBase64: base64 })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Erreur lors de la lecture du PDF");
+        setEmailText(data.text);
+      } else {
+        // Plain text / .eml / .txt files can be read directly in the browser
+        const text = await file.text();
+        setEmailText(text);
+      }
+
+      setImportedFileName(file.name);
+    } catch (err: any) {
+      console.error("Error importing file:", err);
+      setImportError(err.message || "Impossible de lire ce fichier.");
+    } finally {
+      setImportingFile(false);
     }
   };
 
@@ -972,16 +1018,52 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Manual file upload emulator */}
+                  {/* Real file import: PDF, email export (.eml), or plain text */}
                   <div className="space-y-2">
                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
-                      Ou importer un rapport PDF
+                      2. Ou importer un fichier réel (PDF, .eml, .txt)
                     </label>
-                    <div className="border-2 border-dashed border-white/10 hover:border-indigo-500/40 rounded-lg p-4 text-center cursor-pointer bg-[#050608]/40 hover:bg-[#050608]/80 transition-colors">
-                      <UploadCloud className="h-5 w-5 text-gray-500 mx-auto mb-1" />
-                      <p className="text-[10px] font-bold text-gray-300">Simuler l'import d'un rapport PDF</p>
-                      <p className="text-[9px] text-gray-500 mt-0.5">Glissez-déposez n'importe quel rapport mensuel</p>
-                    </div>
+                    <label
+                      htmlFor="real-file-import"
+                      className={`block border-2 border-dashed rounded-lg p-4 text-center cursor-pointer bg-[#050608]/40 transition-colors ${
+                        importingFile
+                          ? "border-indigo-500/40 bg-indigo-950/10"
+                          : "border-white/10 hover:border-indigo-500/40 hover:bg-[#050608]/80"
+                      }`}
+                    >
+                      <input
+                        id="real-file-import"
+                        type="file"
+                        accept=".pdf,.txt,.eml,application/pdf,text/plain"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleFileImport(file);
+                          e.target.value = "";
+                        }}
+                      />
+                      {importingFile ? (
+                        <>
+                          <RefreshCw className="h-5 w-5 text-indigo-400 mx-auto mb-1 animate-spin" />
+                          <p className="text-[10px] font-bold text-indigo-300">Lecture du fichier en cours...</p>
+                        </>
+                      ) : importedFileName ? (
+                        <>
+                          <CheckCircle2 className="h-5 w-5 text-emerald-400 mx-auto mb-1" />
+                          <p className="text-[10px] font-bold text-emerald-300 truncate">{importedFileName}</p>
+                          <p className="text-[9px] text-gray-500 mt-0.5">Cliquez pour importer un autre fichier</p>
+                        </>
+                      ) : (
+                        <>
+                          <UploadCloud className="h-5 w-5 text-gray-500 mx-auto mb-1" />
+                          <p className="text-[10px] font-bold text-gray-300">Importer un rapport PDF ou un email</p>
+                          <p className="text-[9px] text-gray-500 mt-0.5">Le texte sera automatiquement extrait ci-dessous</p>
+                        </>
+                      )}
+                    </label>
+                    {importError && (
+                      <p className="text-[10px] text-red-400 font-medium">{importError}</p>
+                    )}
                   </div>
 
                   {/* Input form for Subject & Text */}
