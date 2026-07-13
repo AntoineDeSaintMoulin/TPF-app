@@ -417,6 +417,35 @@ export default function App() {
     }
   };
 
+  // Manually trigger the Gmail inbox synchronization from a button in the app
+  const [syncingGmail, setSyncingGmail] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+
+  const handleManualGmailSync = async () => {
+    setSyncingGmail(true);
+    setSyncFeedback(null);
+    try {
+      const res = await fetch("/api/manual-sync", { method: "GET" });
+      const json = await res.json();
+      if (json.success) {
+        setSyncFeedback(
+          json.processedCount === 0
+            ? "Aucun nouvel email à traiter."
+            : `${json.processedCount} email(s) traité(s) avec succès.`
+        );
+        await fetchData();
+      } else {
+        setSyncFeedback(json.error || "Erreur lors de la synchronisation.");
+      }
+    } catch (err) {
+      console.error("Error during manual Gmail sync:", err);
+      setSyncFeedback("Impossible de contacter le serveur.");
+    } finally {
+      setSyncingGmail(false);
+      setTimeout(() => setSyncFeedback(null), 5000);
+    }
+  };
+
   // Simple Markdown Renderer
   const renderMarkdownText = (md: string) => {
     return md.split("\n").map((line, idx) => {
@@ -537,6 +566,23 @@ export default function App() {
                     {analyst.label}
                   </div>
                 ))}
+              </div>
+
+              {/* Manual Gmail sync button */}
+              <div className="relative">
+                <button
+                  onClick={handleManualGmailSync}
+                  disabled={syncingGmail}
+                  title="Synchroniser la boîte Gmail maintenant"
+                  className="bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white p-1.5 rounded-lg border border-white/10 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                >
+                  <Mail className={`h-4 w-4 ${syncingGmail ? "animate-pulse" : ""}`} />
+                </button>
+                {syncFeedback && (
+                  <div className="absolute top-full right-0 mt-2 w-56 bg-[#0b0e14] border border-white/10 rounded-lg px-3 py-2 text-[11px] text-gray-300 shadow-xl z-50">
+                    {syncFeedback}
+                  </div>
+                )}
               </div>
 
               {/* Reset simulator data button */}
