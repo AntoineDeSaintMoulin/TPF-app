@@ -428,11 +428,24 @@ export default function App() {
       const res = await fetch("/api/gmail-sync", { method: "GET" });
       const json = await res.json();
       if (json.success) {
-        setSyncFeedback(
-          json.processedCount === 0
-            ? "Aucun nouvel email à traiter."
-            : `${json.processedCount} email(s) traité(s) avec succès.`
-        );
+        const total = json.processedCount || 0;
+        const results = json.results || [];
+        const succeeded = results.filter((r: any) => r.status === "processed").length;
+        const failed = results.filter((r: any) => r.status === "extraction_failed" || r.status === "save_failed").length;
+        const skipped = results.filter((r: any) => r.status === "skipped_empty_body").length;
+
+        let message: string;
+        if (total === 0) {
+          message = "Aucun nouvel email à traiter.";
+        } else if (failed === 0) {
+          message = `${succeeded} email(s) traité(s) avec succès.`;
+        } else if (succeeded === 0) {
+          message = `⚠️ ${failed} email(s) en échec (voir Console pour le détail). Aucun n'a pu être traité.`;
+        } else {
+          message = `${succeeded} réussi(s), ${failed} échoué(s)${skipped ? `, ${skipped} ignoré(s)` : ""}.`;
+        }
+        setSyncFeedback(message);
+        if (failed > 0) console.warn("Détail de la synchronisation Gmail :", results);
         await fetchData();
       } else {
         setSyncFeedback(json.error || "Erreur lors de la synchronisation.");
@@ -442,7 +455,7 @@ export default function App() {
       setSyncFeedback("Impossible de contacter le serveur.");
     } finally {
       setSyncingGmail(false);
-      setTimeout(() => setSyncFeedback(null), 5000);
+      setTimeout(() => setSyncFeedback(null), 8000);
     }
   };
 
@@ -579,7 +592,7 @@ export default function App() {
                   <Mail className={`h-4 w-4 ${syncingGmail ? "animate-pulse" : ""}`} />
                 </button>
                 {syncFeedback && (
-                  <div className="absolute top-full right-0 mt-2 w-56 bg-[#0b0e14] border border-white/10 rounded-lg px-3 py-2 text-[11px] text-gray-300 shadow-xl z-50">
+                  <div className="absolute top-full right-0 mt-2 w-72 bg-[#0b0e14] border border-white/10 rounded-lg px-3 py-2 text-[11px] text-gray-300 shadow-xl z-50">
                     {syncFeedback}
                   </div>
                 )}
