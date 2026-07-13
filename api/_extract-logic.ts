@@ -1,9 +1,9 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
 let ai: GoogleGenAI | null = null;
-if (process.env.TPF_AI_KEY) {
+if (process.env.TPF_AI_Key) {
   ai = new GoogleGenAI({
-    apiKey: process.env.TPF_AI_KEY,
+    apiKey: process.env.TPF_AI_Key,
     httpOptions: { headers: { "User-Agent": "aistudio-build" } },
   });
 }
