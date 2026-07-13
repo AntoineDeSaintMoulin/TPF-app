@@ -1,5 +1,24 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
+// pdfjs-dist s'attend à trouver certaines API navigateur même en environnement Node,
+// bien qu'elles ne soient pas réellement exploitées pour la simple extraction de texte.
+// On fournit donc des remplacements minimaux avant d'importer la librairie.
+if (typeof (globalThis as any).DOMMatrix === "undefined") {
+  (globalThis as any).DOMMatrix = class DOMMatrix {
+    constructor(_init?: any) {}
+  };
+}
+if (typeof (globalThis as any).Path2D === "undefined") {
+  (globalThis as any).Path2D = class Path2D {
+    constructor(_init?: any) {}
+  };
+}
+if (typeof (globalThis as any).ImageData === "undefined") {
+  (globalThis as any).ImageData = class ImageData {
+    constructor(_a?: any, _b?: any, _c?: any) {}
+  };
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Méthode non autorisée" });
 
@@ -9,8 +28,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const buffer = Buffer.from(fileBase64, "base64");
 
-    // La version "legacy" de pdfjs-dist est conçue pour Node.js et n'a pas besoin
-    // d'API navigateur comme DOMMatrix, contrairement au build standard utilisé par pdf-parse.
     const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
     const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
