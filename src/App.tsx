@@ -126,6 +126,8 @@ export default function App() {
 
   // Whether the server has a real Gemini API key configured (checked via /api/status)
   const [aiConfigured, setAiConfigured] = useState<boolean>(false);
+  const [usageToday, setUsageToday] = useState<number>(0);
+  const [quotaLimit, setQuotaLimit] = useState<number>(20);
 
   // Load Data
   const fetchData = async () => {
@@ -143,7 +145,11 @@ export default function App() {
     fetchData();
     fetch("/api/status")
       .then((res) => res.json())
-      .then((data) => setAiConfigured(!!data.aiConfigured))
+      .then((data) => {
+        setAiConfigured(!!data.aiConfigured);
+        setUsageToday(data.usageToday || 0);
+        setQuotaLimit(data.quotaLimit || 20);
+      })
       .catch(() => setAiConfigured(false));
   }, []);
 
@@ -222,6 +228,7 @@ export default function App() {
 
       // reload dataset to display extracted funds instantly in the dashboard
       await fetchData();
+      fetch("/api/status").then((r) => r.json()).then((d) => setUsageToday(d.usageToday || 0)).catch(() => {});
     } catch (err) {
       console.error("Error running Gemini extraction:", err);
       setExtractError("Impossible de contacter le serveur d'extraction. Vérifiez votre connexion et réessayez.");
@@ -447,6 +454,7 @@ export default function App() {
         setSyncFeedback(message);
         if (failed > 0) console.warn("Détail de la synchronisation Gmail :", results);
         await fetchData();
+        fetch("/api/status").then((r) => r.json()).then((d) => setUsageToday(d.usageToday || 0)).catch(() => {});
       } else {
         setSyncFeedback(json.error || "Erreur lors de la synchronisation.");
       }
@@ -667,6 +675,21 @@ export default function App() {
                   </span>
                 )}
               </div>
+
+              {aiConfigured && (
+                <div
+                  title="Nombre d'appels Gemini effectués aujourd'hui (quota gratuit : 20/jour)"
+                  className={`text-[11px] font-mono px-2.5 py-0.5 rounded-full border ${
+                    usageToday >= quotaLimit
+                      ? "text-red-300 bg-red-500/10 border-red-500/20"
+                      : usageToday >= quotaLimit * 0.75
+                      ? "text-amber-300 bg-amber-500/10 border-amber-500/20"
+                      : "text-gray-400 bg-white/5 border-white/10"
+                  }`}
+                >
+                  {usageToday}/{quotaLimit} requêtes IA
+                </div>
+              )}
             </div>
           </div>
         </div>

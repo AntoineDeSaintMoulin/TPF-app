@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import { getDb } from "./_db.js";
 
 let ai: GoogleGenAI | null = null;
 if (process.env.TPF_AI_Key) {
@@ -8,8 +9,25 @@ if (process.env.TPF_AI_Key) {
   });
 }
 
-// Limite de sécurité pour éviter de dépasser les capacités du modèle sur de très longs documents
 const MAX_TEXT_LENGTH = 25000;
+
+// Journalise chaque tentative d'appel à Gemini pour permettre le suivi du quota gratuit (20/jour)
+async function logUsage(success: boolean) {
+  try {
+    const sql = getDb();
+    await sql`
+      CREATE TABLE IF NOT EXISTS ai_usage_log (
+        id SERIAL PRIMARY KEY,
+        success BOOLEAN NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `;
+    await sql`INSERT INTO ai_usage_log (success) VALUES (${success})`;
+  } catch (err) {
+    // La journalisation ne doit jamais faire échouer l'extraction elle-même
+    console.error("Erreur de journalisation d'usage IA:", err);
+  }
+}
 
 export async function runExtraction(emailSubject: string, emailText: string) {
   const safeText = emailText.length > MAX_TEXT_LENGTH
@@ -100,7 +118,9 @@ Strict filtering guidelines:
       contents: userPrompt,
       config: { systemInstruction, responseMimeType: "application/json", responseSchema, temperature: 0.1 },
     });
+    await logUsage(true);
   } catch (err: any) {
+    await logUsage(false);
     throw new Error(`Erreur lors de l'appel à Gemini : ${err.message || "erreur inconnue"}`);
   }
 
