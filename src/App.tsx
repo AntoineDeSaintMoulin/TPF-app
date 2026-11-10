@@ -3,7 +3,7 @@ import {
   Building2, FolderSync, TrendingUp, User, UserCheck, FileText, 
   AlertTriangle, Mail, RefreshCw, Plus, Database, Sparkles, 
   ChevronRight, Code2, CheckCircle2, Trash2, UploadCloud, X, ArrowRight,
-  Printer, Check, Edit3, HelpCircle, UserX
+  Printer, Check, Edit3, HelpCircle, UserX, Loader2, XCircle, MinusCircle
 } from "lucide-react";
 import SchemaAndArch from "./components/SchemaAndArch";
 import AnalystPortal from "./components/AnalystPortal";
@@ -426,44 +426,171 @@ export default function App() {
 
   // Manually trigger the Gmail inbox synchronization from a button in the app
   const [syncingGmail, setSyncingGmail] = useState(false);
-  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+  // --- Suivi de la synchronisation Gmail (modal) ---
+  type SyncEmailRow = { index: number; subject: string; step: string | null; result: any | null };
+  type SyncLogLine = { time: string; message: string; kind: "info" | "success" | "error" };
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [syncPhase, setSyncPhase] = useState<"running" | "done" | "error">("running");
+  const [syncLog, setSyncLog] = useState<SyncLogLine[]>([]);
+  const [syncEmails, setSyncEmails] = useState<SyncEmailRow[]>([]);
+  const [syncTotal, setSyncTotal] = useState<number | null>(null);
+  const [syncStartedAt, setSyncStartedAt] = useState<number>(0);
+  const [syncElapsed, setSyncElapsed] = useState<number>(0);
+
+  useEffect(() => {
+    if (!syncingGmail) return;
+    const t = setInterval(() => setSyncElapsed(Math.round((Date.now() - syncStartedAt) / 1000)), 500);
+    return () => clearInterval(t);
+  }, [syncingGmail, syncStartedAt]);
+
+  const addSyncLog = (message: string, kind: SyncLogLine["kind"] = "info") => {
+    const time = new Date().toLocaleTimeString("fr-FR");
+    setSyncLog((prev) => [...prev, { time, message, kind }]);
+  };
 
   const handleManualGmailSync = async () => {
+    if (syncingGmail) {
+      setSyncModalOpen(true);
+      return;
+    }
+    setSyncModalOpen(true);
     setSyncingGmail(true);
-    setSyncFeedback(null);
-    try {
-      const res = await fetch("/api/gmail-sync", { method: "GET" });
-      const json = await res.json();
-      if (json.success) {
-        const total = json.processedCount || 0;
-        const results = json.results || [];
-        const succeeded = results.filter((r: any) => r.status === "processed").length;
-        const failed = results.filter((r: any) => r.status === "extraction_failed" || r.status === "save_failed").length;
-        const skipped = results.filter((r: any) => r.status === "skipped_empty_body").length;
+    setSyncPhase("running");
+    setSyncLog([]);
+    setSyncEmails([]);
+    setSyncTotal(null);
+    setSyncStartedAt(Date.now());
+    setSyncElapsed(0);
+    addSyncLog("Envoi de la demande de synchronisation au serveur…");
 
-        let message: string;
-        if (total === 0) {
-          message = "Aucun nouvel email à traiter.";
-        } else if (failed === 0) {
-          message = `${succeeded} email(s) traité(s) avec succès.`;
-        } else if (succeeded === 0) {
-          message = `⚠️ ${failed} email(s) en échec (voir Console pour le détail). Aucun n'a pu être traité.`;
-        } else {
-          message = `${succeeded} réussi(s), ${failed} échoué(s)${skipped ? `, ${skipped} ignoré(s)` : ""}.`;
+    let finished = false;
+    const handleEvent = (ev: any) => {
+      switch (ev.type) {
+        case "step":
+          addSyncLog(ev.message);
+          break;
+        case "found":
+          setSyncTotal(ev.count);
+          addSyncLog(ev.count === 0 ? "Aucun email non lu à traiter." : `${ev.count} email(s) non lu(s) trouvé(s).`, ev.count === 0 ? "success" : "info");
+          break;
+        case "email_start":
+          setSyncEmails((prev) => [...prev, { index: ev.index, subject: ev.subject || "(sans sujet)", step: "Lecture du contenu…", result: null }]);
+          break;
+        case "email_step":
+          setSyncEmails((prev) => prev.map((e) => (e.index === ev.index ? { ...e, step: ev.message } : e)));
+          break;
+        case "email_result":
+          setSyncEmails((prev) => prev.map((e) => (e.index === ev.index ? { ...e, step: null, result: ev.result } : e)));
+          break;
+        case "done": {
+          finished = true;
+          const results = ev.results || [];
+          const ok = results.filter((r: any) => r.status === "processed").length;
+          const failed = results.filter((r: any) => r.status === "extraction_failed" || r.status === "save_failed").length;
+          const skipped = results.filter((r: any) => r.status === "skipped_empty_body").length;
+          if (results.length > 0) {
+            addSyncLog(
+              `Terminé : ${ok} réussi(s)${failed ? `, ${failed} échoué(s)` : ""}${skipped ? `, ${skipped} ignoré(s)` : ""}.`,
+              failed > 0 ? "error" : "success"
+            );
+          } else {
+            addSyncLog("Terminé.", "success");
+          }
+          setSyncPhase("done");
+          break;
         }
-        setSyncFeedback(message);
-        if (failed > 0) console.warn("Détail de la synchronisation Gmail :", results);
-        await fetchData();
-        fetch("/api/status").then((r) => r.json()).then((d) => setUsageToday(d.usageToday || 0)).catch(() => {});
-      } else {
-        setSyncFeedback(json.error || "Erreur lors de la synchronisation.");
+        case "error":
+          finished = true;
+          addSyncLog(`Erreur : ${ev.message}`, "error");
+          setSyncPhase("error");
+          break;
       }
-    } catch (err) {
+    };
+
+    try {
+      const res = await fetch("/api/gmail-sync?stream=1", { method: "GET" });
+      addSyncLog(`Réponse du serveur reçue (HTTP ${res.status}).`, res.ok ? "info" : "error");
+
+      const contentType = res.headers.get("content-type") || "";
+      if (!res.ok || !contentType.includes("ndjson") || !res.body) {
+        // Réponse inattendue (erreur Vercel, ancienne version de l'API…) : on affiche ce qu'on a reçu
+        const text = await res.text();
+        let message = text.slice(0, 300) || `HTTP ${res.status}`;
+        try {
+          const json = JSON.parse(text);
+          if (json.error) message = json.error;
+          else if (json.success) {
+            handleEvent({ type: "found", count: json.processedCount || 0 });
+            (json.results || []).forEach((r: any, i: number) => {
+              handleEvent({ type: "email_start", index: i, subject: r.subject });
+              handleEvent({ type: "email_result", index: i, result: r });
+            });
+            handleEvent({ type: "done", results: json.results || [] });
+          }
+        } catch {}
+        if (!finished) {
+          finished = true;
+          addSyncLog(`Erreur : ${message}`, "error");
+          setSyncPhase("error");
+        }
+      } else {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              handleEvent(JSON.parse(line));
+            } catch {
+              addSyncLog(`Message illisible reçu du serveur : ${line.slice(0, 120)}`, "error");
+            }
+          }
+        }
+        if (buffer.trim()) {
+          try { handleEvent(JSON.parse(buffer)); } catch {}
+        }
+        if (!finished) {
+          finished = true;
+          addSyncLog(
+            "La connexion s'est interrompue avant la fin (délai maximal de la fonction Vercel probablement dépassé). Les emails déjà traités sont enregistrés ; relance la synchro pour continuer.",
+            "error"
+          );
+          setSyncPhase("error");
+        }
+      }
+    } catch (err: any) {
       console.error("Error during manual Gmail sync:", err);
-      setSyncFeedback("Impossible de contacter le serveur.");
+      addSyncLog(`Impossible de contacter le serveur : ${err?.message || err}`, "error");
+      setSyncPhase("error");
     } finally {
       setSyncingGmail(false);
-      setTimeout(() => setSyncFeedback(null), 8000);
+      await fetchData();
+      fetch("/api/status").then((r) => r.json()).then((d) => setUsageToday(d.usageToday || 0)).catch(() => {});
+    }
+  };
+
+  const describeSyncResult = (r: any): { label: string; tone: "ok" | "warn" | "err" | "muted" } => {
+    switch (r.status) {
+      case "processed":
+        if (r.is_noise) return { label: `Ignoré (bruit)${r.noise_reason ? ` : ${r.noise_reason}` : ""}`, tone: "muted" };
+        return {
+          label: `Enregistré → ${r.fund_name || "fonds inconnu"}${r.is_emergency ? " · ⚠️ Prioritaire" : ""}${r.api_mocked ? " (extraction simulée)" : ""}`,
+          tone: r.is_emergency ? "warn" : "ok",
+        };
+      case "skipped_empty_body":
+        return { label: "Ignoré : corps de l'email vide", tone: "muted" };
+      case "extraction_failed":
+        return { label: `Échec de l'analyse IA : ${r.error}`, tone: "err" };
+      case "save_failed":
+        return { label: `Échec de l'enregistrement : ${r.error}`, tone: "err" };
+      default:
+        return { label: r.status, tone: "muted" };
     }
   };
 
@@ -590,21 +717,14 @@ export default function App() {
               </div>
 
               {/* Manual Gmail sync button */}
-              <div className="relative">
-                <button
-                  onClick={handleManualGmailSync}
-                  disabled={syncingGmail}
-                  title="Synchroniser la boîte Gmail maintenant"
-                  className="bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white p-1.5 rounded-lg border border-white/10 transition-colors disabled:opacity-50 disabled:cursor-wait"
-                >
-                  <Mail className={`h-4 w-4 ${syncingGmail ? "animate-pulse" : ""}`} />
-                </button>
-                {syncFeedback && (
-                  <div className="absolute top-full right-0 mt-2 w-72 bg-[#0b0e14] border border-white/10 rounded-lg px-3 py-2 text-[11px] text-gray-300 shadow-xl z-50">
-                    {syncFeedback}
-                  </div>
-                )}
-              </div>
+              <button
+                onClick={handleManualGmailSync}
+                title={syncingGmail ? "Synchronisation en cours — voir le suivi" : "Synchroniser la boîte Gmail maintenant"}
+                className="relative bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white p-1.5 rounded-lg border border-white/10 transition-colors cursor-pointer"
+              >
+                <Mail className={`h-4 w-4 ${syncingGmail ? "animate-pulse text-indigo-300" : ""}`} />
+                {syncingGmail && <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-indigo-400 animate-ping" />}
+              </button>
 
               {/* Reset simulator data button */}
               <button 
@@ -1533,6 +1653,118 @@ export default function App() {
               >
                 Fermer
               </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* D. GMAIL SYNC PROGRESS MODAL */}
+      {syncModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in" id="gmail-sync-modal">
+          <div className="bg-[#0b0e14] rounded-xl border border-white/10 shadow-2xl max-w-2xl w-full p-6 space-y-4 max-h-[90vh] flex flex-col">
+
+            <div className="flex items-center justify-between border-b border-white/5 pb-3">
+              <div className="flex items-center gap-2">
+                {syncPhase === "running" && <Loader2 className="h-5 w-5 text-indigo-400 animate-spin" />}
+                {syncPhase === "done" && <CheckCircle2 className="h-5 w-5 text-emerald-400" />}
+                {syncPhase === "error" && <XCircle className="h-5 w-5 text-rose-400" />}
+                <h3 className="font-bold text-sm text-white">
+                  {syncPhase === "running" ? "Synchronisation Gmail en cours…" : syncPhase === "done" ? "Synchronisation Gmail terminée" : "Synchronisation Gmail en échec"}
+                </h3>
+              </div>
+              <button
+                onClick={() => setSyncModalOpen(false)}
+                title={syncingGmail ? "Masquer (la synchro continue en arrière-plan)" : "Fermer"}
+                className="text-gray-400 hover:text-white hover:bg-white/5 p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Barre de progression */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] text-gray-400">
+                <span>
+                  {syncTotal === null
+                    ? "Préparation…"
+                    : syncTotal === 0
+                    ? "Aucun email à traiter"
+                    : `${syncEmails.filter((e) => e.result).length} / ${syncTotal} email(s) traité(s)`}
+                </span>
+                <span>{syncElapsed}s</span>
+              </div>
+              <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-500 ${syncPhase === "error" ? "bg-rose-500" : syncPhase === "done" ? "bg-emerald-500" : "bg-indigo-500"} ${syncTotal === null && syncPhase === "running" ? "animate-pulse" : ""}`}
+                  style={{
+                    width:
+                      syncTotal === null
+                        ? syncPhase === "running" ? "15%" : "100%"
+                        : syncTotal === 0
+                        ? "100%"
+                        : `${Math.round((syncEmails.filter((e) => e.result).length / syncTotal) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Journal des étapes */}
+            <div className="bg-[#050608] border border-white/5 rounded-lg p-3 space-y-1 font-mono text-[11px] max-h-40 overflow-y-auto">
+              {syncLog.map((l, i) => (
+                <div key={i} className={l.kind === "error" ? "text-rose-400" : l.kind === "success" ? "text-emerald-400" : "text-gray-400"}>
+                  <span className="text-gray-600 mr-2">{l.time}</span>
+                  {l.message}
+                </div>
+              ))}
+            </div>
+
+            {/* Détail par email */}
+            {syncEmails.length > 0 && (
+              <div className="space-y-1.5 overflow-y-auto flex-1 min-h-0 pr-1">
+                {syncEmails.map((e) => {
+                  const d = e.result ? describeSyncResult(e.result) : null;
+                  return (
+                    <div key={e.index} className="flex items-start gap-2.5 bg-white/[0.02] border border-white/5 rounded-lg px-3 py-2">
+                      <div className="pt-0.5 shrink-0">
+                        {!d && <Loader2 className="h-3.5 w-3.5 text-indigo-400 animate-spin" />}
+                        {d?.tone === "ok" && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
+                        {d?.tone === "warn" && <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />}
+                        {d?.tone === "err" && <XCircle className="h-3.5 w-3.5 text-rose-400" />}
+                        {d?.tone === "muted" && <MinusCircle className="h-3.5 w-3.5 text-gray-500" />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs text-white font-medium truncate" title={e.subject}>{e.subject}</p>
+                        <p className={`text-[11px] break-words ${!d ? "text-indigo-300" : d.tone === "err" ? "text-rose-300" : d.tone === "warn" ? "text-amber-300" : d.tone === "ok" ? "text-emerald-300" : "text-gray-500"}`}>
+                          {d ? d.label : e.step}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-3 pt-2 border-t border-white/5">
+              <p className="text-[10px] text-gray-500">
+                {syncingGmail ? "Tu peux fermer cette fenêtre : la synchro continue en arrière-plan." : "Le tableau de bord a été rafraîchi."}
+              </p>
+              <div className="flex gap-2">
+                {!syncingGmail && (
+                  <button
+                    onClick={handleManualGmailSync}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Relancer
+                  </button>
+                )}
+                <button
+                  onClick={() => setSyncModalOpen(false)}
+                  className="bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs px-4 py-2 rounded-lg transition-colors cursor-pointer"
+                >
+                  {syncingGmail ? "Masquer" : "Fermer"}
+                </button>
+              </div>
             </div>
 
           </div>
