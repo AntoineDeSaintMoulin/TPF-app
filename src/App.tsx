@@ -1740,6 +1740,11 @@ export default function App() {
                         <p className={`text-[11px] break-words ${!d ? "text-indigo-300" : d.tone === "err" ? "text-rose-300" : d.tone === "warn" ? "text-amber-300" : d.tone === "ok" ? "text-emerald-300" : "text-gray-500"}`}>
                           {d ? d.label : e.step}
                         </p>
+                        {e.result?.attachments?.length > 0 && (
+                          <p className="text-[10px] text-gray-500 mt-0.5 break-words">
+                            📎 {e.result.attachments.map((a: any) => `${a.filename} (${a.status})`).join(" · ")}
+                          </p>
+                        )}
                       </div>
                     </div>
                   );

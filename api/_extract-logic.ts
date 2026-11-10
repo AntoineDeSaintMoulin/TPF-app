@@ -9,7 +9,14 @@ if (process.env.TPF_AI_Key) {
   });
 }
 
-const MAX_TEXT_LENGTH = 25000;
+// Texte de l'email + texte des PDF joints (≈ 30 000 tokens max)
+const MAX_TEXT_LENGTH = 120000;
+
+// PDF envoyés tels quels à Gemini (PDF scannés sans texte extractible)
+export interface PdfFileForAi {
+  filename: string;
+  base64: string;
+}
 
 // Journalise chaque tentative d'appel à Gemini pour permettre le suivi du quota gratuit (20/jour)
 async function logUsage(success: boolean) {
@@ -29,7 +36,7 @@ async function logUsage(success: boolean) {
   }
 }
 
-export async function runExtraction(emailSubject: string, emailText: string) {
+export async function runExtraction(emailSubject: string, emailText: string, pdfFiles: PdfFileForAi[] = []) {
   const safeText = emailText.length > MAX_TEXT_LENGTH
     ? emailText.slice(0, MAX_TEXT_LENGTH) + "\n\n[...texte tronqué car trop long...]"
     : emailText;
@@ -83,10 +90,22 @@ export async function runExtraction(emailSubject: string, emailText: string) {
 
 Guidelines:
 1. EVERY EMAIL IS RELEVANT: all emails received come from asset managers and must be recorded. Never discard an email. If some figures are missing, use null; if views or positioning are missing, summarize whatever information the email does contain (meeting, event, commentary, attachment mention…).
-2. Always identify the asset manager and a fund/strategy name, using the subject, sender signature or forwarded headers if needed.
-3. EMERGENCY DETECTION: Tag with is_emergency = true if there is an alert like "départ de gérant" (manager departure), "hard close", or "process change". Be highly sensitive to these risk factors.`;
+2. PDF ATTACHMENTS (factsheets, monthly reports, presentations, minutes) usually hold the key figures and views: read them carefully and prioritize their content over the short email cover text.
+3. Always identify the asset manager and a fund/strategy name, using the subject, sender signature or forwarded headers if needed.
+4. EMERGENCY DETECTION: Tag with is_emergency = true if there is an alert like "départ de gérant" (manager departure), "hard close", or "process change". Be highly sensitive to these risk factors.`;
 
-  const userPrompt = `Subject: ${emailSubject || "No Subject"}\n\nEmail Text:\n${safeText}`;
+  const userPrompt = `Subject: ${emailSubject || "No Subject"}\n\nEmail text (followed by the text of its PDF attachments, if any):\n${safeText}`
+    + (pdfFiles.length ? `\n\nAdditional scanned PDF attachments are provided as files: ${pdfFiles.map((f) => f.filename).join(", ")}` : "");
+
+  const contents = pdfFiles.length
+    ? [{
+        role: "user",
+        parts: [
+          { text: userPrompt },
+          ...pdfFiles.map((f) => ({ inlineData: { mimeType: "application/pdf", data: f.base64 } })),
+        ],
+      }]
+    : userPrompt;
 
   // Gemini renvoie parfois 503 (serveurs saturés) ou 500 : erreurs temporaires,
   // on réessaie automatiquement avant d'abandonner.
@@ -96,7 +115,7 @@ Guidelines:
     try {
       response = await ai.models.generateContent({
         model: "gemini-3.5-flash",
-        contents: userPrompt,
+        contents,
         config: { systemInstruction, responseMimeType: "application/json", responseSchema, temperature: 0.1 },
       });
       await logUsage(true);

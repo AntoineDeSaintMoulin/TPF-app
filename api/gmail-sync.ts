@@ -1,6 +1,10 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getGmailClient, extractPlainTextBody, getHeader } from "./_gmail.js";
-import { runExtraction } from "./_extract-logic.js";
+import { getGmailClient, extractPlainTextBody, getHeader, findPdfAttachments, downloadAttachment } from "./_gmail.js";
+import { runExtraction, PdfFileForAi } from "./_extract-logic.js";
+import { extractPdfText } from "./_pdf.js";
+
+const MAX_PDF_TEXT_CHARS = 40000; // par pièce jointe
+const MAX_INLINE_PDF_BYTES = 15 * 1024 * 1024; // limite Gemini ≈ 20 Mo par requête
 import { saveExtractedReport } from "./_persist.js";
 
 // Événements envoyés au navigateur en mode "stream" (un objet JSON par ligne)
@@ -77,19 +81,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const subject = getHeader(headers, "Subject");
       emit({ type: "email_start", index: i, total: messages.length, id, subject });
 
-      const body = extractPlainTextBody(fullMsg.data.payload);
+      const emailBody = extractPlainTextBody(fullMsg.data.payload);
 
-      if (!body || body.trim().length === 0) {
-        pushResult({ id, subject, status: "skipped_empty_body" });
+      // Lecture des pièces jointes PDF
+      const pdfRefs = findPdfAttachments(fullMsg.data.payload);
+      const attachmentTexts: string[] = [];
+      const scannedPdfs: PdfFileForAi[] = [];
+      const attachmentsInfo: { filename: string; status: string }[] = [];
+      let inlineBytes = 0;
+
+      if (pdfRefs.length > 0) {
+        emit({ type: "email_step", index: i, message: `Lecture de ${pdfRefs.length} pièce(s) jointe(s) PDF…` });
+      }
+      for (const ref of pdfRefs) {
+        try {
+          const buffer = await downloadAttachment(gmail, id, ref);
+          let text = "";
+          try {
+            text = await extractPdfText(new Uint8Array(buffer));
+          } catch (err) {
+            console.error(`Lecture texte impossible pour ${ref.filename}:`, err);
+          }
+
+          if (text.length >= 200) {
+            const clipped = text.length > MAX_PDF_TEXT_CHARS ? text.slice(0, MAX_PDF_TEXT_CHARS) + "\n[...PDF tronqué...]" : text;
+            attachmentTexts.push(`\n\n===== Pièce jointe PDF : ${ref.filename} =====\n${clipped}`);
+            attachmentsInfo.push({ filename: ref.filename, status: "texte lu" });
+          } else if (inlineBytes + buffer.length <= MAX_INLINE_PDF_BYTES) {
+            // PDF scanné / sans texte : on l'envoie directement à Gemini qui sait le lire
+            inlineBytes += buffer.length;
+            scannedPdfs.push({ filename: ref.filename, base64: buffer.toString("base64") });
+            attachmentsInfo.push({ filename: ref.filename, status: "envoyé tel quel à l'IA (scanné)" });
+          } else {
+            attachmentsInfo.push({ filename: ref.filename, status: "ignoré (trop volumineux)" });
+          }
+        } catch (err: any) {
+          attachmentsInfo.push({ filename: ref.filename, status: `erreur : ${err.message}` });
+        }
+      }
+
+      const body = (emailBody || "") + attachmentTexts.join("");
+
+      if (body.trim().length === 0 && scannedPdfs.length === 0) {
+        pushResult({ id, subject, status: "skipped_empty_body", attachments: attachmentsInfo });
         continue;
       }
 
       emit({ type: "email_step", index: i, message: "Analyse par l'IA (Gemini)…" });
       let extraction;
       try {
-        extraction = await runExtraction(subject, body);
+        extraction = await runExtraction(subject, body, scannedPdfs);
       } catch (err: any) {
-        pushResult({ id, subject, status: "extraction_failed", error: err.message });
+        pushResult({ id, subject, status: "extraction_failed", error: err.message, attachments: attachmentsInfo });
         continue;
       }
 
@@ -98,7 +141,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         saveResult = await saveExtractedReport(extraction.raw_extraction, subject, body);
       } catch (err: any) {
-        pushResult({ id, subject, status: "save_failed", error: err.message });
+        pushResult({ id, subject, status: "save_failed", error: err.message, attachments: attachmentsInfo });
         continue;
       }
 
@@ -117,6 +160,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         fund_name: extraction.raw_extraction.fund_name,
         is_emergency: extraction.raw_extraction.is_emergency,
         api_mocked: extraction.api_mocked,
+        attachments: attachmentsInfo,
       });
     }
 

@@ -51,6 +51,45 @@ export function extractPlainTextBody(payload: any): string {
   return "";
 }
 
+export interface PdfAttachmentRef {
+  filename: string;
+  attachmentId?: string;
+  inlineData?: string; // base64url, quand le PDF est directement inclus dans le message
+  size: number;
+}
+
+// Liste récursivement les pièces jointes PDF d'un message Gmail
+export function findPdfAttachments(payload: any): PdfAttachmentRef[] {
+  const found: PdfAttachmentRef[] = [];
+  const walk = (part: any) => {
+    if (!part) return;
+    const filename: string = part.filename || "";
+    const isPdf = part.mimeType === "application/pdf" || filename.toLowerCase().endsWith(".pdf");
+    if (isPdf && (part.body?.attachmentId || part.body?.data)) {
+      found.push({
+        filename: filename || "document.pdf",
+        attachmentId: part.body.attachmentId,
+        inlineData: part.body.data,
+        size: part.body.size || 0,
+      });
+    }
+    (part.parts || []).forEach(walk);
+  };
+  walk(payload);
+  return found;
+}
+
+// Télécharge le contenu binaire d'une pièce jointe
+export async function downloadAttachment(gmail: any, messageId: string, ref: PdfAttachmentRef): Promise<Buffer> {
+  let data = ref.inlineData;
+  if (!data && ref.attachmentId) {
+    const res = await gmail.users.messages.attachments.get({ userId: "me", messageId, id: ref.attachmentId });
+    data = res.data.data;
+  }
+  if (!data) throw new Error("Pièce jointe vide");
+  return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
+
 function getHeader(headers: any[], name: string): string {
   const h = headers?.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
   return h?.value || "";
