@@ -16,9 +16,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const result = await runExtraction(emailSubject, emailText);
 
-    if (!result.raw_extraction.is_noise) {
-      await saveExtractedReport(result.raw_extraction, emailSubject || "Extraction manuelle", emailText);
-    }
+    await saveExtractedReport(result.raw_extraction, emailSubject || "Extraction manuelle", emailText);
 
     res.status(200).json(result);
   } catch (error: any) {

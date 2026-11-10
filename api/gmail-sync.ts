@@ -48,7 +48,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     emit({ type: "step", message: "Recherche des emails non lus dans la boîte de réception…" });
     const listRes = await gmail.users.messages.list({
       userId: "me",
-      q: "is:unread in:inbox",
+      // Exclut les alertes de sécurité automatiques de Google (connexion de l'app, etc.)
+      q: "is:unread in:inbox -from:no-reply@accounts.google.com",
       maxResults: 20,
     });
 
@@ -92,14 +93,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         continue;
       }
 
-      if (!extraction.raw_extraction.is_noise) {
-        emit({ type: "email_step", index: i, message: "Enregistrement en base de données…" });
-        try {
-          await saveExtractedReport(extraction.raw_extraction, subject, body);
-        } catch (err: any) {
-          pushResult({ id, subject, status: "save_failed", error: err.message });
-          continue;
-        }
+      emit({ type: "email_step", index: i, message: "Enregistrement en base de données…" });
+      let saveResult: { saved: boolean; reason?: string };
+      try {
+        saveResult = await saveExtractedReport(extraction.raw_extraction, subject, body);
+      } catch (err: any) {
+        pushResult({ id, subject, status: "save_failed", error: err.message });
+        continue;
       }
 
       emit({ type: "email_step", index: i, message: "Marquage de l'email comme lu…" });
@@ -112,9 +112,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       pushResult({
         id,
         subject,
-        status: "processed",
-        is_noise: extraction.raw_extraction.is_noise,
-        noise_reason: extraction.raw_extraction.noise_reason,
+        status: saveResult.saved ? "processed" : "not_saved",
+        reason: saveResult.reason,
         fund_name: extraction.raw_extraction.fund_name,
         is_emergency: extraction.raw_extraction.is_emergency,
         api_mocked: extraction.api_mocked,

@@ -11,7 +11,7 @@ export async function getAutoAssignedAnalyst(fundName: string): Promise<string> 
   return "Unknown";
 }
 
-export async function saveExtractedReport(data: any, subject: string, body: string) {
+export async function saveExtractedReport(data: any, subject: string, body: string): Promise<{ saved: boolean; reason?: string }> {
   const sql = getDb();
 
   // Cherche ou crée le gérant
@@ -29,7 +29,7 @@ export async function saveExtractedReport(data: any, subject: string, body: stri
     mgr = { id: newId, name: data.asset_manager };
   }
 
-  if (!mgr) return;
+  if (!mgr) return { saved: false, reason: "Société de gestion non identifiée par l'IA" };
 
   // Cherche ou crée le fonds
   const funds = await sql`SELECT id, name FROM funds`;
@@ -47,7 +47,7 @@ export async function saveExtractedReport(data: any, subject: string, body: stri
     fund = { id: newId, name: data.fund_name };
   }
 
-  if (!fund) return;
+  if (!fund) return { saved: false, reason: "Fonds non identifié par l'IA" };
 
   // Sauvegarde le rapport
   const newRepId = `rep-${Date.now()}`;
@@ -71,4 +71,6 @@ export async function saveExtractedReport(data: any, subject: string, body: stri
       ${new Date().toISOString()}
     )
   `;
+
+  return { saved: true };
 }

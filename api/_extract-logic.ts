@@ -37,27 +37,6 @@ export async function runExtraction(emailSubject: string, emailText: string) {
   if (!ai) {
     const textLower = safeText.toLowerCase();
 
-    if (textLower.includes("webinaire") || textLower.includes("newsletter d'été") || textLower.includes("offre d'abonnement")) {
-      return {
-        raw_extraction: {
-          is_noise: true,
-          noise_reason: "Détecté comme invitation publicitaire ou webinaire commercial sans valeur d'analyse fondamentale.",
-          asset_manager: textLower.includes("robeco") ? "Robeco" : "Gérant Inconnu",
-          fund_name: "N/A",
-          sales_email: "marketing@assetmanager.com",
-          report_date: new Date().toISOString().split("T")[0],
-          cash_rate: null,
-          performance_pct: null,
-          aum_m: null,
-          key_views: "",
-          positioning: "",
-          is_emergency: false,
-          emergency_reason: "",
-        },
-        api_mocked: true,
-      };
-    }
-
     const isEmergency = textLower.includes("urgent") || textLower.includes("départ") || textLower.includes("close") || textLower.includes("hard close");
     const assetManager = textLower.includes("robeco") ? "Robeco" : textLower.includes("amundi") ? "Amundi Asset Management" : textLower.includes("jpm") || textLower.includes("jorgan") ? "JP Morgan Asset Management" : "Robeco";
     const fundName = textLower.includes("water") ? "Robeco Sustainable Water" : textLower.includes("emerging") ? "Amundi Emerging Markets Equity" : "Robeco Global Premium Equities";
@@ -85,10 +64,8 @@ export async function runExtraction(emailSubject: string, emailText: string) {
   const responseSchema = {
     type: Type.OBJECT,
     properties: {
-      is_noise: { type: Type.BOOLEAN, description: "True if this email is a webinar invitation, generic commercial newsletter, spam, or out-of-office message with NO fundamental or quantitative fund metrics." },
-      noise_reason: { type: Type.STRING, description: "Explanation of why the email is categorized as noise, or empty string if not noise." },
       asset_manager: { type: Type.STRING, description: "Name of the asset manager company (gérant)." },
-      fund_name: { type: Type.STRING, description: "The official or common name of the investment fund analyzed." },
+      fund_name: { type: Type.STRING, description: "The official or common name of the investment fund analyzed. If no specific fund is named, use the strategy, team or product named in the subject (never return N/A)." },
       sales_email: { type: Type.STRING, description: "The contact/sales email of the emitter or sales representative if visible in text." },
       report_date: { type: Type.STRING, description: "Date of the report or update in YYYY-MM-DD format. Default to today if not clearly specified." },
       cash_rate: { type: Type.NUMBER, description: "The percentage level of cash/liquidity in the fund. Use null if not mentioned." },
@@ -99,29 +76,44 @@ export async function runExtraction(emailSubject: string, emailText: string) {
       is_emergency: { type: Type.BOOLEAN, description: "True if the email reports a critical event: manager departure, hard/soft close, major process changes, or regulatory issues." },
       emergency_reason: { type: Type.STRING, description: "Detailed description of the emergency or priority alert, or empty string if none." },
     },
-    required: ["is_noise", "asset_manager", "fund_name", "key_views", "positioning", "is_emergency"],
+    required: ["asset_manager", "fund_name", "key_views", "positioning", "is_emergency"],
   };
 
   const systemInstruction = `You are an expert investment analyst AI. Your role is to ingest financial emails and PDF contents from investment fund managers (asset managers) and convert them into a structured database record.
 
-Strict filtering guidelines:
-1. INVITS & NEWSLETTERS: Commercial webinar invitations, product marketing newsletters with no specific fund figures, and OOO messages must have is_noise = true.
-2. FUND UPDATES: Emails/documents with actual key views, fund positioning, or figures (AUM, cash rate, performance) must have is_noise = false.
+Guidelines:
+1. EVERY EMAIL IS RELEVANT: all emails received come from asset managers and must be recorded. Never discard an email. If some figures are missing, use null; if views or positioning are missing, summarize whatever information the email does contain (meeting, event, commentary, attachment mention…).
+2. Always identify the asset manager and a fund/strategy name, using the subject, sender signature or forwarded headers if needed.
 3. EMERGENCY DETECTION: Tag with is_emergency = true if there is an alert like "départ de gérant" (manager departure), "hard close", or "process change". Be highly sensitive to these risk factors.`;
 
   const userPrompt = `Subject: ${emailSubject || "No Subject"}\n\nEmail Text:\n${safeText}`;
 
+  // Gemini renvoie parfois 503 (serveurs saturés) ou 500 : erreurs temporaires,
+  // on réessaie automatiquement avant d'abandonner.
+  const RETRY_DELAYS_MS = [3000, 8000];
   let response;
-  try {
-    response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: userPrompt,
-      config: { systemInstruction, responseMimeType: "application/json", responseSchema, temperature: 0.1 },
-    });
-    await logUsage(true);
-  } catch (err: any) {
-    await logUsage(false);
-    throw new Error(`Erreur lors de l'appel à Gemini : ${err.message || "erreur inconnue"}`);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: userPrompt,
+        config: { systemInstruction, responseMimeType: "application/json", responseSchema, temperature: 0.1 },
+      });
+      await logUsage(true);
+      break;
+    } catch (err: any) {
+      await logUsage(false);
+      const msg = String(err?.message || "");
+      const isTransient = err?.status === 503 || err?.status === 500 || /\b(503|500)\b|UNAVAILABLE|high demand|overloaded|INTERNAL/i.test(msg);
+      if (isTransient && attempt < RETRY_DELAYS_MS.length) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+        continue;
+      }
+      if (isTransient) {
+        throw new Error(`Gemini est temporairement saturé (erreur 503) après ${attempt + 1} tentatives. L'email reste non lu et sera retraité à la prochaine synchro.`);
+      }
+      throw new Error(`Erreur lors de l'appel à Gemini : ${msg || "erreur inconnue"}`);
+    }
   }
 
   if (!response.text) {
@@ -134,6 +126,10 @@ Strict filtering guidelines:
   } catch (err) {
     throw new Error("La réponse de Gemini n'était pas un JSON valide (le document est peut-être trop complexe ou mal structuré).");
   }
+
+  // Plus de filtrage "bruit" : tous les emails reçus sont considérés comme pertinents
+  parsedData.is_noise = false;
+  parsedData.noise_reason = "";
 
   return { raw_extraction: parsedData, api_mocked: false };
 }

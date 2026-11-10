@@ -487,7 +487,7 @@ export default function App() {
           const results = ev.results || [];
           const ok = results.filter((r: any) => r.status === "processed").length;
           const failed = results.filter((r: any) => r.status === "extraction_failed" || r.status === "save_failed").length;
-          const skipped = results.filter((r: any) => r.status === "skipped_empty_body").length;
+          const skipped = results.filter((r: any) => r.status === "skipped_empty_body" || r.status === "not_saved").length;
           if (results.length > 0) {
             addSyncLog(
               `Terminé : ${ok} réussi(s)${failed ? `, ${failed} échoué(s)` : ""}${skipped ? `, ${skipped} ignoré(s)` : ""}.`,
@@ -583,6 +583,8 @@ export default function App() {
           label: `Enregistré → ${r.fund_name || "fonds inconnu"}${r.is_emergency ? " · ⚠️ Prioritaire" : ""}${r.api_mocked ? " (extraction simulée)" : ""}`,
           tone: r.is_emergency ? "warn" : "ok",
         };
+      case "not_saved":
+        return { label: `Lu mais non enregistré : ${r.reason || "informations insuffisantes"}`, tone: "warn" };
       case "skipped_empty_body":
         return { label: "Ignoré : corps de l'email vide", tone: "muted" };
       case "extraction_failed":
