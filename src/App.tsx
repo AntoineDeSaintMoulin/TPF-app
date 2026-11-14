@@ -199,11 +199,46 @@ export default function App() {
     }
   };
 
-  // Perform Gemini email extraction
+  // Envoi de l'extraction vers un fonds (page d'ingestion)
+  const [ingestTargetFundId, setIngestTargetFundId] = useState<string>("new");
+  const [ingestSaving, setIngestSaving] = useState(false);
+  const [ingestSaved, setIngestSaved] = useState<{ fundId: string; fundName: string } | null>(null);
+  const [ingestSaveError, setIngestSaveError] = useState<string | null>(null);
+
+  const handleSendToFund = async () => {
+    if (!extractionResult) return;
+    setIngestSaving(true);
+    setIngestSaveError(null);
+    try {
+      const res = await fetch("/api/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "save",
+          extraction: extractionResult.raw_extraction,
+          targetFundId: ingestTargetFundId,
+          emailSubject,
+          emailText,
+        }),
+      });
+      const json = await res.json().catch(() => ({ error: `Réponse invalide du serveur (HTTP ${res.status})` }));
+      if (!res.ok || json.error || !json.saved) throw new Error(json.error || "Rapport non enregistré");
+      setIngestSaved({ fundId: json.fundId, fundName: json.fundName });
+      await fetchData();
+    } catch (err: any) {
+      setIngestSaveError(err.message || "Erreur lors de l'enregistrement");
+    } finally {
+      setIngestSaving(false);
+    }
+  };
+
+  // Perform Gemini email extraction (aperçu : rien n'est enregistré avant « Envoyer vers ce fonds »)
   const handleExtract = async () => {
     setExtracting(true);
     setExtractionResult(null);
     setExtractError(null);
+    setIngestSaved(null);
+    setIngestSaveError(null);
     try {
       const res = await fetch("/api/extract", {
         method: "POST",
@@ -218,6 +253,7 @@ export default function App() {
       }
 
       setExtractionResult(data);
+      setIngestTargetFundId(data.suggestion?.fundId || "new");
 
       // Auto-fill the subject field from what the AI detected, if it was left empty
       if (!emailSubject.trim() && data.raw_extraction) {
@@ -226,8 +262,6 @@ export default function App() {
         if (autoSubject) setEmailSubject(autoSubject);
       }
 
-      // reload dataset to display extracted funds instantly in the dashboard
-      await fetchData();
       fetch("/api/status").then((r) => r.json()).then((d) => setUsageToday(d.usageToday || 0)).catch(() => {});
     } catch (err) {
       console.error("Error running Gemini extraction:", err);
@@ -1668,10 +1702,12 @@ export default function App() {
                                 </p>
                               </div>
 
-                              <div className="text-[10px] bg-[#050608] border border-white/5 text-indigo-400 font-bold px-2.5 py-0.5 rounded-full shrink-0 flex items-center gap-1">
-                                <UserCheck className="h-3 w-3" />
-                                Routé vers : {portalData.funds.find(f => f.name.toLowerCase().includes(extractionResult.raw_extraction.fund_name.toLowerCase()))?.analystId || "Antoine (Nouveau Fonds Auto-Match)"}
-                              </div>
+                              {extractionResult.suggestion && (
+                                <div className="text-[10px] bg-[#050608] border border-white/5 text-indigo-400 font-bold px-2.5 py-0.5 rounded-full shrink-0 flex items-center gap-1">
+                                  <UserCheck className="h-3 w-3" />
+                                  Fonds reconnu dans la base
+                                </div>
+                              )}
                             </div>
 
                             {/* Core Financial Indicators */}
@@ -1717,16 +1753,88 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Raw Expandable JSON block */}
-                    <div className="bg-slate-900 rounded-xl p-5 border border-slate-800 shadow-sm space-y-3">
-                      <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-                        <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 font-mono">Response JSON Payload</span>
-                        <span className="text-[9px] text-slate-500">Structured Schema Compliant</span>
-                      </div>
-                      <pre className="text-[10px] font-mono text-slate-300 overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-56">
-                        {JSON.stringify(extractionResult.raw_extraction, null, 2)}
-                      </pre>
-                    </div>
+                    {/* Send the extraction to a fund */}
+                    {(() => {
+                      const ex = extractionResult.raw_extraction;
+                      const sugg = extractionResult.suggestion;
+                      const target = portalData.funds.find((f) => f.id === ingestTargetFundId);
+                      const targetAnalyst = target ? target.analystId : null;
+                      const managersSorted = [...portalData.assetManagers].sort((x, y) => x.name.localeCompare(y.name));
+                      return (
+                        <div className="bg-[#0b0e14] rounded-xl border border-indigo-500/20 p-5 shadow-lg space-y-3" id="send-to-fund">
+                          <div className="flex items-center gap-2 border-b border-white/5 pb-2.5">
+                            <FolderSync className="h-4 w-4 text-indigo-400" />
+                            <h3 className="font-bold text-xs uppercase text-gray-400 tracking-wider">Envoyer vers un fonds</h3>
+                          </div>
+
+                          {ingestSaved ? (
+                            <div className="space-y-3">
+                              <div className="flex items-start gap-2 text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+                                <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+                                <span>Rapport enregistré dans <strong className="text-white">{ingestSaved.fundName}</strong>.</span>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  const f = portalData.funds.find((x) => x.id === ingestSaved.fundId);
+                                  if (f) {
+                                    setSelectedManagerId(f.managerId);
+                                    setSelectedFundId(f.id);
+                                  }
+                                  setActiveTab("dashboard");
+                                }}
+                                className="bg-white/5 hover:bg-white/10 text-gray-200 font-semibold text-xs px-3 py-2 rounded-lg border border-white/10 transition-colors flex items-center gap-1.5 cursor-pointer"
+                              >
+                                Voir le fonds <ArrowRight className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <p className="text-[11px] text-gray-400 leading-relaxed">
+                                {sugg ? (
+                                  <>Fonds détecté dans le texte : <strong className="text-white">{sugg.fundName}</strong>{sugg.managerName ? ` (${sugg.managerName})` : ""}. Tu peux le changer avant d'envoyer.</>
+                                ) : (
+                                  <>Aucun fonds existant ne correspond au texte : par défaut, un nouveau fonds <strong className="text-white">« {ex.fund_name} »</strong> sera créé. Tu peux aussi choisir un fonds existant.</>
+                                )}
+                              </p>
+                              <select
+                                value={ingestTargetFundId}
+                                onChange={(e) => setIngestTargetFundId(e.target.value)}
+                                className="w-full bg-[#050608] border border-white/10 focus:border-indigo-500/60 rounded-lg px-3 py-2.5 text-xs text-white focus:outline-none cursor-pointer"
+                              >
+                                <option value="new">➕ Nouveau fonds : {ex.fund_name || "(nom inconnu)"}{ex.asset_manager ? ` — ${ex.asset_manager}` : ""}</option>
+                                {managersSorted.map((m) => {
+                                  const mf = portalData.funds.filter((f) => f.managerId === m.id).sort((x, y) => x.name.localeCompare(y.name));
+                                  if (!mf.length) return null;
+                                  return (
+                                    <optgroup key={m.id} label={m.name}>
+                                      {mf.map((f) => (
+                                        <option key={f.id} value={f.id}>
+                                          {f.name}{sugg?.fundId === f.id ? "  ★ détecté dans le texte" : ""}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  );
+                                })}
+                              </select>
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                <p className="text-[10px] text-gray-500">
+                                  {target ? <>Analyste : <span className="text-gray-300">{targetAnalyst === "Unknown" ? "Non affecté" : targetAnalyst}</span></> : "Le nouveau fonds sera affecté selon les règles d'attribution."}
+                                </p>
+                                <button
+                                  onClick={handleSendToFund}
+                                  disabled={ingestSaving}
+                                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs px-4 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                                >
+                                  {ingestSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                                  {target ? "Envoyer vers ce fonds" : "Créer le fonds et envoyer"}
+                                </button>
+                              </div>
+                              {ingestSaveError && <p className="text-[11px] text-rose-400">{ingestSaveError}</p>}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                   </div>
                 )}

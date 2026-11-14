@@ -1,5 +1,5 @@
 import { getDb } from "./_db.js";
-import { findOrCreateManager, findOrCreateFund } from "./_identity.js";
+import { findOrCreateManager, findOrCreateFund, attachToFund } from "./_identity.js";
 
 export async function getAutoAssignedAnalyst(fundName: string): Promise<string> {
   const sql = getDb();
@@ -12,12 +12,21 @@ export async function getAutoAssignedAnalyst(fundName: string): Promise<string> 
   return "Unknown";
 }
 
-export async function saveExtractedReport(data: any, subject: string, body: string): Promise<{ saved: boolean; reason?: string; fundId?: string; fundName?: string; fundCreated?: boolean; matchedBy?: string }> {
+// targetFundId : fonds choisi manuellement (page d'ingestion). Sinon, rapprochement automatique.
+export async function saveExtractedReport(data: any, subject: string, body: string, targetFundId?: string): Promise<{ saved: boolean; reason?: string; fundId?: string; fundName?: string; fundCreated?: boolean; matchedBy?: string }> {
   const sql = getDb();
 
   // Rapprochement gérant / fonds (ISIN, proposition de Gemini, alias, nom normalisé) — voir _identity.ts
-  const fund = await findOrCreateFund(data, () => findOrCreateManager(data), getAutoAssignedAnalyst);
-  if ("error" in fund) return { saved: false, reason: fund.error };
+  let fund: { id: string; name: string; created: boolean; matchedBy: string };
+  if (targetFundId) {
+    const attached = await attachToFund(data, targetFundId);
+    if (!attached) return { saved: false, reason: "Le fonds choisi n'existe plus" };
+    fund = { ...attached, created: false, matchedBy: "manual" };
+  } else {
+    const found = await findOrCreateFund(data, () => findOrCreateManager(data), getAutoAssignedAnalyst);
+    if ("error" in found) return { saved: false, reason: found.error };
+    fund = found;
+  }
 
   // Sauvegarde le rapport
   const newRepId = `rep-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;

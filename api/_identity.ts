@@ -131,7 +131,7 @@ async function addFundAlias(alias: string, fundId: string, managerNorm = "") {
   `;
 }
 
-export async function findOrCreateManager(data: any): Promise<{ id: string; name: string; created: boolean } | null> {
+export async function findOrCreateManager(data: any, create = true): Promise<{ id: string; name: string; created: boolean } | null> {
   await ensureIdentitySchema();
   const sql = getDb();
   const managers = (await sql`SELECT id, name FROM asset_managers`) as any[];
@@ -158,6 +158,8 @@ export async function findOrCreateManager(data: any): Promise<{ id: string; name
   });
   if (byName) return { ...byName, created: false };
 
+  if (!create) return null;
+
   // 4. Création
   const id = `mgr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   await sql`
@@ -173,7 +175,8 @@ export async function findOrCreateManager(data: any): Promise<{ id: string; name
 export async function findOrCreateFund(
   data: any,
   getManager: () => Promise<{ id: string; name: string } | null>,
-  assignAnalyst: (fundName: string) => Promise<string>
+  assignAnalyst: (fundName: string) => Promise<string>,
+  create = true
 ): Promise<{ id: string; name: string; created: boolean; matchedBy: string } | { error: string }> {
   await ensureIdentitySchema();
   const sql = getDb();
@@ -181,6 +184,7 @@ export async function findOrCreateFund(
   const isins = cleanIsins(data.isins);
 
   const finish = async (fund: any, matchedBy: string) => {
+    if (!create) return { id: fund.id, name: fund.name, created: false, matchedBy };
     // Complète les ISIN connus du fonds
     const missing = isins.filter((i) => !(fund.isins || []).includes(i));
     if (missing.length) {
@@ -215,6 +219,8 @@ export async function findOrCreateFund(
   // 4. Nom normalisé (le nom du gérant est retiré du début des deux côtés)
   const byName = funds.find((f) => normalizeFundName(f.name, managerNorm) === norm || normalizeFundName(f.name) === normalizeFundName(name));
   if (byName) return finish(byName, "name");
+
+  if (!create) return { error: "Aucun fonds existant ne correspond" };
 
   // 5. Création
   const id = `fund-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -298,4 +304,35 @@ export async function mergeManagers(sourceId: string, targetId: string) {
       ON CONFLICT (alias_norm) DO UPDATE SET manager_id = EXCLUDED.manager_id, alias = EXCLUDED.alias
     `,
   ]);
+}
+
+// Rattache explicitement une extraction à un fonds choisi par l'utilisateur :
+// complète ses ISIN et retient le nom lu dans le texte comme alias de ce fonds.
+export async function attachToFund(data: any, fundId: string): Promise<{ id: string; name: string } | null> {
+  await ensureIdentitySchema();
+  const sql = getDb();
+  const rows = (await sql`
+    SELECT f.id, f.name, f.isins, m.name AS manager_name
+    FROM funds f JOIN asset_managers m ON m.id = f.manager_id WHERE f.id = ${fundId}
+  `) as any[];
+  const fund = rows[0];
+  if (!fund) return null;
+
+  const isins = cleanIsins(data.isins).filter((i) => !(fund.isins || []).includes(i));
+  if (isins.length) {
+    await sql`UPDATE funds SET isins = (SELECT ARRAY(SELECT DISTINCT unnest(isins || ${isins}::text[]))) WHERE id = ${fundId}`;
+  }
+
+  // N'enregistre l'alias que si ce nom ne désigne pas déjà un AUTRE fonds existant
+  // (sinon un mauvais choix ponctuel détournerait les futurs emails de ce fonds)
+  const name = String(data.fund_name || "").trim();
+  if (name && name !== "N/A" && name !== fund.name) {
+    const others = (await sql`
+      SELECT f.id, f.name, m.name AS manager_name FROM funds f JOIN asset_managers m ON m.id = f.manager_id WHERE f.id <> ${fundId}
+    `) as any[];
+    const plain = normalizeFundName(name);
+    const clash = others.some((o) => normalizeFundName(o.name) === plain || normalizeFundName(o.name, normalizeManagerName(o.manager_name)) === normalizeFundName(name, normalizeManagerName(o.manager_name)));
+    if (!clash) await addFundAlias(name, fundId, normalizeManagerName(fund.manager_name));
+  }
+  return { id: fund.id, name: fund.name };
 }
