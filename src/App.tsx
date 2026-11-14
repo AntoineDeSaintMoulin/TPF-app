@@ -3,7 +3,7 @@ import {
   Building2, FolderSync, TrendingUp, User, UserCheck, FileText, 
   AlertTriangle, Mail, RefreshCw, Plus, Database, Sparkles, 
   ChevronRight, Code2, CheckCircle2, Trash2, UploadCloud, X, ArrowRight,
-  Printer, Check, Edit3, HelpCircle, UserX, Loader2, XCircle, MinusCircle, GitMerge
+  Printer, Check, Edit3, HelpCircle, UserX, Loader2, XCircle, MinusCircle, GitMerge, Send
 } from "lucide-react";
 import SchemaAndArch from "./components/SchemaAndArch";
 import AnalystPortal from "./components/AnalystPortal";
@@ -305,7 +305,7 @@ export default function App() {
     setOnepagerGenerating(true);
     setOnepagerResult(null);
     try {
-      const res = await fetch("/api/onepager", {
+      const res = await fetch("/api/fund-ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fundId })
@@ -362,6 +362,42 @@ export default function App() {
       }
     } catch (err) {
       console.error("Error during quick reassignment:", err);
+    }
+  };
+
+  // --- Questions à l'IA sur un fonds (Niveau 3) ---
+  type AskTurn = { role: "user" | "ai"; text: string; meta?: string };
+  const [askInput, setAskInput] = useState("");
+  const [askThreads, setAskThreads] = useState<Record<string, AskTurn[]>>({});
+  const [askingFundId, setAskingFundId] = useState<string | null>(null);
+  const [askError, setAskError] = useState<string | null>(null);
+
+  const handleAskFund = async (fundId: string, rawQuestion?: string) => {
+    const question = (rawQuestion ?? askInput).trim();
+    if (!question || askingFundId) return;
+    const history = askThreads[fundId] || [];
+    setAskThreads((prev) => ({ ...prev, [fundId]: [...history, { role: "user", text: question }] }));
+    setAskInput("");
+    setAskError(null);
+    setAskingFundId(fundId);
+    try {
+      const res = await fetch("/api/fund-ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "ask", fundId, question, history }),
+      });
+      const json = await res.json().catch(() => ({ error: `Réponse invalide du serveur (HTTP ${res.status})` }));
+      if (!res.ok || json.error) throw new Error(json.error || `HTTP ${res.status}`);
+      const meta = json.sources ? `Basé sur ${json.sources}${json.totalReports && json.totalReports > json.sources ? ` des ${json.totalReports}` : ""} rapport(s)` : undefined;
+      setAskThreads((prev) => ({ ...prev, [fundId]: [...(prev[fundId] || []), { role: "ai", text: json.answer, meta }] }));
+      fetch("/api/status").then((r) => r.json()).then((d) => setUsageToday(d.usageToday || 0)).catch(() => {});
+    } catch (err: any) {
+      // On retire la question restée sans réponse et on la remet dans le champ
+      setAskThreads((prev) => ({ ...prev, [fundId]: (prev[fundId] || []).slice(0, -1) }));
+      setAskInput(question);
+      setAskError(err.message || "Erreur lors de la question à l'IA");
+    } finally {
+      setAskingFundId(null);
     }
   };
 
@@ -648,40 +684,55 @@ export default function App() {
   };
 
   // Simple Markdown Renderer
+  // Gras (**texte**) et italique (*texte*) à l'intérieur d'une ligne
+  const renderInline = (text: string): React.ReactNode[] =>
+    text.split(/(\*\*[^*]+\*\*|\*[^*\s][^*]*\*)/g).map((part, i) => {
+      if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+        return <strong key={i} className="text-white font-semibold">{part.slice(2, -2)}</strong>;
+      }
+      if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+        return <em key={i}>{part.slice(1, -1)}</em>;
+      }
+      return part;
+    });
+
   const renderMarkdownText = (md: string) => {
     return md.split("\n").map((line, idx) => {
       const trimmed = line.trim();
       if (trimmed.startsWith("# ")) {
-        return <h1 key={idx} className="text-xl font-bold text-slate-900 mt-4 mb-2 border-b border-slate-100 pb-1">{trimmed.slice(2)}</h1>;
+        return <h1 key={idx} className="text-lg font-bold text-white mt-4 mb-2 border-b border-white/10 pb-1">{renderInline(trimmed.slice(2))}</h1>;
       }
       if (trimmed.startsWith("## ")) {
-        return <h2 key={idx} className="text-base font-semibold text-slate-800 mt-4 mb-2 flex items-center gap-2">{trimmed.slice(3)}</h2>;
+        return <h2 key={idx} className="text-sm font-semibold text-gray-100 mt-4 mb-2 flex items-center gap-2">{renderInline(trimmed.slice(3))}</h2>;
       }
       if (trimmed.startsWith("### ")) {
-        return <h3 key={idx} className="text-sm font-semibold text-slate-700 mt-3 mb-1">{trimmed.slice(4)}</h3>;
+        return <h3 key={idx} className="text-xs font-semibold text-gray-200 mt-3 mb-1">{renderInline(trimmed.slice(4))}</h3>;
       }
       if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
-        return <li key={idx} className="ml-4 list-disc text-xs text-slate-600 my-1">{trimmed.slice(2)}</li>;
+        return <li key={idx} className="ml-4 list-disc text-xs text-gray-300 my-1 leading-relaxed">{renderInline(trimmed.slice(2))}</li>;
+      }
+      if (/^\d+[.)] /.test(trimmed)) {
+        return <li key={idx} className="ml-4 list-decimal text-xs text-gray-300 my-1 leading-relaxed">{renderInline(trimmed.replace(/^\d+[.)] /, ""))}</li>;
       }
       if (trimmed.startsWith("> ")) {
-        return <blockquote key={idx} className="border-l-4 border-indigo-400 pl-3 italic text-xs text-slate-500 bg-slate-50 py-1 my-1.5 rounded-r">{trimmed.slice(2)}</blockquote>;
+        return <blockquote key={idx} className="border-l-4 border-indigo-400 pl-3 italic text-xs text-gray-300 bg-white/[0.03] py-1 my-1.5 rounded-r">{renderInline(trimmed.slice(2))}</blockquote>;
       }
       if (trimmed === "---") {
-        return <hr key={idx} className="my-3 border-slate-100" />;
+        return <hr key={idx} className="my-3 border-white/10" />;
       }
       if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
         const cells = trimmed.split("|").slice(1, -1).map(c => c.trim());
         if (cells.some(c => c.includes("---"))) return null; // skip separators
         return (
-          <div key={idx} className="grid grid-cols-3 border-b border-slate-100 py-1.5 text-[11px] px-2 bg-slate-50">
+          <div key={idx} className="grid grid-cols-3 border-b border-white/5 py-1.5 text-[11px] px-2 bg-white/[0.02]">
             {cells.map((cell, cidx) => (
-              <span key={cidx} className="text-slate-700 font-medium">{cell.replace(/\*\*/g, '')}</span>
+              <span key={cidx} className="text-gray-200 font-medium">{cell.replace(/\*\*/g, '')}</span>
             ))}
           </div>
         );
       }
       if (!trimmed) return <div key={idx} className="h-2" />;
-      return <p key={idx} className="text-xs text-slate-600 my-1 leading-relaxed">{trimmed}</p>;
+      return <p key={idx} className="text-xs text-gray-300 my-1 leading-relaxed">{renderInline(trimmed)}</p>;
     });
   };
 
@@ -1093,6 +1144,99 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="space-y-6 animate-fade-in">
+
+                    {/* Ask the AI about this fund */}
+                    {(() => {
+                      const thread = askThreads[selectedFund.id] || [];
+                      const isAsking = askingFundId === selectedFund.id;
+                      const suggestions = [
+                        "Quel est le positionnement actuel du fonds ?",
+                        "Comment a évolué le niveau de cash ?",
+                        "Y a-t-il eu des changements dans l'équipe de gestion ?",
+                        "Résume le dernier rapport en 3 points",
+                      ];
+                      return (
+                        <div className="bg-[#0b0e14] rounded-xl border border-indigo-500/20 p-4 shadow-lg space-y-3" id="fund-ask">
+                          <form
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              handleAskFund(selectedFund.id);
+                            }}
+                            className="flex items-center gap-2"
+                          >
+                            <div className="relative flex-1">
+                              <Sparkles className="h-4 w-4 text-indigo-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                              <input
+                                type="text"
+                                value={askInput}
+                                onChange={(e) => setAskInput(e.target.value)}
+                                placeholder={`Pose une question à l'IA sur ${selectedFund.name}…`}
+                                disabled={isAsking}
+                                className="w-full bg-[#050608] border border-white/10 focus:border-indigo-500/60 rounded-lg pl-9 pr-3 py-2.5 text-xs text-white placeholder:text-gray-500 focus:outline-none transition-colors disabled:opacity-60"
+                              />
+                            </div>
+                            <button
+                              type="submit"
+                              disabled={isAsking || !askInput.trim()}
+                              title="Envoyer la question"
+                              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white p-2.5 rounded-lg transition-colors cursor-pointer"
+                            >
+                              {isAsking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                            </button>
+                          </form>
+
+                          {thread.length === 0 && !isAsking && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {suggestions.map((q) => (
+                                <button
+                                  key={q}
+                                  onClick={() => handleAskFund(selectedFund.id, q)}
+                                  className="text-[10px] text-gray-400 hover:text-indigo-200 bg-white/[0.03] hover:bg-indigo-500/10 border border-white/5 hover:border-indigo-500/30 rounded-full px-2.5 py-1 transition-colors cursor-pointer"
+                                >
+                                  {q}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {askError && <p className="text-[11px] text-rose-400">{askError}</p>}
+
+                          {(thread.length > 0 || isAsking) && (
+                            <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
+                              {thread.map((t, i) =>
+                                t.role === "user" ? (
+                                  <div key={i} className="flex justify-end">
+                                    <p className="max-w-[85%] bg-indigo-600/20 border border-indigo-500/20 text-indigo-100 text-xs rounded-lg px-3 py-2">{t.text}</p>
+                                  </div>
+                                ) : (
+                                  <div key={i} className="bg-[#050608] border border-white/5 rounded-lg px-3.5 py-3 text-xs text-gray-300 space-y-1.5">
+                                    {renderMarkdownText(t.text)}
+                                    {t.meta && <p className="text-[10px] text-gray-500 pt-1 border-t border-white/5">{t.meta}</p>}
+                                  </div>
+                                )
+                              )}
+                              {isAsking && (
+                                <div className="flex items-center gap-2 text-[11px] text-indigo-300 px-1">
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  L'IA lit les rapports du fonds…
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {thread.length > 0 && !isAsking && (
+                            <div className="flex justify-end">
+                              <button
+                                onClick={() => setAskThreads((prev) => ({ ...prev, [selectedFund.id]: [] }))}
+                                className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors cursor-pointer"
+                              >
+                                Effacer la conversation
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     
                     {/* Upper title card with analyst name and export actions */}
                     <div className="bg-[#0b0e14] rounded-xl border border-white/5 p-5 shadow-lg space-y-4">

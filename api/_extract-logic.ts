@@ -37,6 +37,36 @@ async function logUsage(success: boolean) {
   }
 }
 
+// Appel à Gemini avec relance automatique sur les erreurs temporaires (503 serveurs saturés, 500)
+// et journalisation de chaque tentative pour le compteur de quota.
+export async function generateWithRetry(params: any) {
+  if (!ai) throw new Error("Clé Gemini non configurée");
+  const RETRY_DELAYS_MS = [3000, 8000];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await ai.models.generateContent(params);
+      await logUsage(true);
+      return response;
+    } catch (err: any) {
+      await logUsage(false);
+      const msg = String(err?.message || "");
+      const isTransient = err?.status === 503 || err?.status === 500 || /\b(503|500)\b|UNAVAILABLE|high demand|overloaded|INTERNAL/i.test(msg);
+      if (isTransient && attempt < RETRY_DELAYS_MS.length) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+        continue;
+      }
+      if (isTransient) {
+        throw new Error(`Gemini est temporairement saturé (erreur 503) après ${attempt + 1} tentatives. Réessaie dans quelques minutes.`);
+      }
+      throw new Error(`Erreur lors de l'appel à Gemini : ${msg || "erreur inconnue"}`);
+    }
+  }
+}
+
+export function isAiConfigured() {
+  return !!ai;
+}
+
 export async function runExtraction(emailSubject: string, emailText: string, pdfFiles: PdfFileForAi[] = []) {
   const safeText = emailText.length > MAX_TEXT_LENGTH
     ? emailText.slice(0, MAX_TEXT_LENGTH) + "\n\n[...texte tronqué car trop long...]"
@@ -119,33 +149,11 @@ Guidelines:
       }]
     : userPrompt;
 
-  // Gemini renvoie parfois 503 (serveurs saturés) ou 500 : erreurs temporaires,
-  // on réessaie automatiquement avant d'abandonner.
-  const RETRY_DELAYS_MS = [3000, 8000];
-  let response;
-  for (let attempt = 0; ; attempt++) {
-    try {
-      response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents,
-        config: { systemInstruction, responseMimeType: "application/json", responseSchema, temperature: 0.1 },
-      });
-      await logUsage(true);
-      break;
-    } catch (err: any) {
-      await logUsage(false);
-      const msg = String(err?.message || "");
-      const isTransient = err?.status === 503 || err?.status === 500 || /\b(503|500)\b|UNAVAILABLE|high demand|overloaded|INTERNAL/i.test(msg);
-      if (isTransient && attempt < RETRY_DELAYS_MS.length) {
-        await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
-        continue;
-      }
-      if (isTransient) {
-        throw new Error(`Gemini est temporairement saturé (erreur 503) après ${attempt + 1} tentatives. L'email reste non lu et sera retraité à la prochaine synchro.`);
-      }
-      throw new Error(`Erreur lors de l'appel à Gemini : ${msg || "erreur inconnue"}`);
-    }
-  }
+  const response = await generateWithRetry({
+    model: "gemini-3.5-flash",
+    contents,
+    config: { systemInstruction, responseMimeType: "application/json", responseSchema, temperature: 0.1 },
+  });
 
   if (!response.text) {
     throw new Error("Gemini n'a renvoyé aucun contenu exploitable pour ce document.");
