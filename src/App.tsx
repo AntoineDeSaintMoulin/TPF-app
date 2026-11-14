@@ -300,20 +300,40 @@ export default function App() {
     }
   };
 
-  // Generate Fund One-Pager (Markdown)
+  // Génère le One-Pager (rédigé par Gemini) et le télécharge directement en document Word
+  const [onepagerError, setOnepagerError] = useState<string | null>(null);
   const handleGenerateOnepager = async (fundId: string) => {
     setOnepagerGenerating(true);
-    setOnepagerResult(null);
+    setOnepagerError(null);
     try {
       const res = await fetch("/api/fund-ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fundId })
+        body: JSON.stringify({ action: "onepager", fundId })
       });
-      const json = await res.json();
-      setOnepagerResult(json.markdown);
-    } catch (err) {
+      const json = await res.json().catch(() => ({ error: `Réponse invalide du serveur (HTTP ${res.status})` }));
+      if (!res.ok || json.error || !json.markdown) throw new Error(json.error || "La fiche n'a pas pu être générée");
+
+      const fund = portalData?.funds.find((f) => f.id === fundId);
+      const fundName = json.fundName || fund?.name || "Fonds";
+      const managerName = json.managerName || portalData?.assetManagers.find((m) => m.id === fund?.managerId)?.name;
+
+      // Chargé à la demande pour ne pas alourdir le chargement de l'app
+      const { buildOnepagerDocx, onepagerFileName } = await import("./lib/onepagerDocx");
+      const blob = await buildOnepagerDocx(json.markdown, { fundName, managerName });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = onepagerFileName(fundName);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      fetch("/api/status").then((r) => r.json()).then((d) => setUsageToday(d.usageToday || 0)).catch(() => {});
+    } catch (err: any) {
       console.error("Error generating onepager sheet:", err);
+      setOnepagerError(err.message || "Erreur lors de la génération du One-Pager");
     } finally {
       setOnepagerGenerating(false);
     }
@@ -1255,11 +1275,12 @@ export default function App() {
                             disabled={onepagerGenerating}
                             className="bg-white/5 hover:bg-white/10 text-gray-300 font-semibold text-[11px] px-3 py-2 rounded-lg border border-white/10 transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                           >
-                            <Printer className="h-3.5 w-3.5 text-gray-400" />
-                            {onepagerGenerating ? "Génération..." : "Exporter One-Pager"}
+                            {onepagerGenerating ? <Loader2 className="h-3.5 w-3.5 text-gray-400 animate-spin" /> : <FileText className="h-3.5 w-3.5 text-blue-400" />}
+                            {onepagerGenerating ? "Génération du Word…" : "Exporter One-Pager (Word)"}
                           </button>
                         </div>
                       </div>
+                      {onepagerError && <p className="text-[11px] text-rose-400">{onepagerError}</p>}
 
                       {/* Display warning banner if the latest report is an Emergency! */}
                       {latestReport?.urgencyLevel === "Prioritaire" && (

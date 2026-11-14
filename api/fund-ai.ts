@@ -184,17 +184,25 @@ async function handleOnepager(req: VercelRequest, res: VercelResponse) {
 ## 👤 Coin de l'Analyste
 > *${payload.analystPositioning}*
 > *${payload.analystComment}*`;
-    return res.status(200).json({ markdown: mockOnepager, api_mocked: true });
+    return res.status(200).json({ markdown: mockOnepager, fundName: payload.fundName, managerName: payload.manager, api_mocked: true });
   }
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await generateWithRetry({
       model: "gemini-3.5-flash",
       contents: `Crée une fiche One-Pager complète et extrêmement professionnelle en français pour le fonds d'investissement suivant :
 ${JSON.stringify(payload, null, 2)}`,
-      config: { systemInstruction: `You are a high-end financial analyst presentation builder. You format elegant, direct "One-Pager" sheets in Markdown.` },
+      config: {
+        temperature: 0.3,
+        systemInstruction: `You are a high-end financial analyst presentation builder. You write elegant, direct "One-Pager" fund sheets in French, exported to a Word document that must fit on ONE A4 page.
+Strict Markdown format (it is converted to Word):
+- Start with a single "# " title (fund name).
+- Use "## " for 4 to 6 sections (e.g. Informations générales, Indicateurs clés, Vues de gestion, Positionnement, Avis de l'analyste, Points de vigilance).
+- Use "- " bullets and **bold** for emphasis; key figures in a Markdown table (| Indicateur | Valeur |).
+- No emojis, no HTML, no code blocks, no images. Be concise.`,
+      },
     });
-    res.status(200).json({ markdown: response.text, api_mocked: false });
+    res.status(200).json({ markdown: response.text, fundName: payload.fundName, managerName: payload.manager, api_mocked: false });
   } catch (err: any) {
     console.error("Onepager generation error:", err);
     res.status(500).json({ error: err.message || "Erreur de génération du One-Pager" });
