@@ -137,7 +137,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       emit({ type: "email_step", index: i, message: "Enregistrement en base de données…" });
-      let saveResult: { saved: boolean; reason?: string };
+      let saveResult: Awaited<ReturnType<typeof saveExtractedReport>>;
       try {
         saveResult = await saveExtractedReport(extraction.raw_extraction, subject, body);
       } catch (err: any) {
@@ -157,7 +157,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         subject,
         status: saveResult.saved ? "processed" : "not_saved",
         reason: saveResult.reason,
-        fund_name: extraction.raw_extraction.fund_name,
+        fund_name: saveResult.fundName || extraction.raw_extraction.fund_name,
+        fund_created: saveResult.fundCreated,
+        matched_by: saveResult.matchedBy,
         is_emergency: extraction.raw_extraction.is_emergency,
         api_mocked: extraction.api_mocked,
         attachments: attachmentsInfo,

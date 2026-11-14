@@ -1,12 +1,14 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getDb } from "./_db.js";
+import { ensureIdentitySchema } from "./_identity.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const sql = getDb();
 
   try {
+    await ensureIdentitySchema();
     const assetManagers = await sql`SELECT id, name, sales_contacts AS "salesContacts" FROM asset_managers`;
-    const funds = await sql`SELECT id, manager_id AS "managerId", name, analyst_id AS "analystId" FROM funds`;
+    const funds = await sql`SELECT id, manager_id AS "managerId", name, analyst_id AS "analystId", isins FROM funds`;
     const fundReports = await sql`
       SELECT
         id, fund_id AS "fundId", report_date AS "reportDate",

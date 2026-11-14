@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { getDb } from "./_db.js";
+import { getCatalogForPrompt } from "./_identity.js";
 
 let ai: GoogleGenAI | null = null;
 if (process.env.TPF_AI_Key) {
@@ -73,6 +74,9 @@ export async function runExtraction(emailSubject: string, emailText: string, pdf
     properties: {
       asset_manager: { type: Type.STRING, description: "Name of the asset manager company (gérant)." },
       fund_name: { type: Type.STRING, description: "The official or common name of the investment fund analyzed. If no specific fund is named, use the strategy, team or product named in the subject (never return N/A)." },
+      existing_manager_id: { type: Type.STRING, description: "If the asset manager matches one in the KNOWN CATALOG (even if spelled differently), its MANAGER id (e.g. mgr-123). Empty string if it is a new manager." },
+      existing_fund_id: { type: Type.STRING, description: "If the fund matches one in the KNOWN CATALOG (same fund under a short, commercial or official name, with or without the manager prefix), its FUND id (e.g. fund-123). Empty string if it is a genuinely new fund." },
+      isins: { type: Type.ARRAY, items: { type: Type.STRING }, description: "All ISIN codes of the fund found in the email or attachments (12 characters, e.g. LU0123456789). Empty array if none." },
       sales_email: { type: Type.STRING, description: "The contact/sales email of the emitter or sales representative if visible in text." },
       report_date: { type: Type.STRING, description: "Date of the report or update in YYYY-MM-DD format. Default to today if not clearly specified." },
       cash_rate: { type: Type.NUMBER, description: "The percentage level of cash/liquidity in the fund. Use null if not mentioned." },
@@ -92,9 +96,17 @@ Guidelines:
 1. EVERY EMAIL IS RELEVANT: all emails received come from asset managers and must be recorded. Never discard an email. If some figures are missing, use null; if views or positioning are missing, summarize whatever information the email does contain (meeting, event, commentary, attachment mention…).
 2. PDF ATTACHMENTS (factsheets, monthly reports, presentations, minutes) usually hold the key figures and views: read them carefully and prioritize their content over the short email cover text.
 3. Always identify the asset manager and a fund/strategy name, using the subject, sender signature or forwarded headers if needed.
-4. EMERGENCY DETECTION: Tag with is_emergency = true if there is an alert like "départ de gérant" (manager departure), "hard close", or "process change". Be highly sensitive to these risk factors.`;
+4. AVOID DUPLICATES: a KNOWN CATALOG of managers and funds already in the database is provided. The same fund is often written differently (e.g. "NinetyOne" vs "Ninety One", "Pan European Small Caps" vs "Horizon Pan European Smaller Companies Fund"). When the email is about a fund of the catalog, set existing_fund_id (and existing_manager_id) to its id. Only leave them empty for a genuinely new fund/manager. Do not match different strategies of the same manager (e.g. "Global Equity" vs "Emerging Markets Equity").
+5. EMERGENCY DETECTION: Tag with is_emergency = true if there is an alert like "départ de gérant" (manager departure), "hard close", or "process change". Be highly sensitive to these risk factors.`;
 
-  const userPrompt = `Subject: ${emailSubject || "No Subject"}\n\nEmail text (followed by the text of its PDF attachments, if any):\n${safeText}`
+  let catalog = "";
+  try {
+    catalog = await getCatalogForPrompt();
+  } catch (err) {
+    console.error("Impossible de charger le catalogue des fonds:", err);
+  }
+
+  const userPrompt = (catalog ? `KNOWN CATALOG (existing managers and funds):\n${catalog}\n\n---\n\n` : "") + `Subject: ${emailSubject || "No Subject"}\n\nEmail text (followed by the text of its PDF attachments, if any):\n${safeText}`
     + (pdfFiles.length ? `\n\nAdditional scanned PDF attachments are provided as files: ${pdfFiles.map((f) => f.filename).join(", ")}` : "");
 
   const contents = pdfFiles.length

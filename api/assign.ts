@@ -20,7 +20,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    const funds = await sql`SELECT id, manager_id AS "managerId", name, analyst_id AS "analystId" FROM funds`;
+    const funds = await sql`SELECT id, manager_id AS "managerId", name, analyst_id AS "analystId", isins FROM funds`;
     const assignmentRules = await sql`SELECT pattern, analyst_id AS "analystId" FROM assignment_rules`;
 
     res.status(200).json({ success: true, funds, assignmentRules });

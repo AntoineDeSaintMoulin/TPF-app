@@ -1,13 +1,16 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getDb } from "./_db.js";
+import { ensureIdentitySchema, mergeFunds, mergeManagers } from "./_identity.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Méthode non autorisée" });
 
   const sql = getDb();
-  const { action, id } = req.body;
+  const { action, id, targetId } = req.body;
 
   try {
+    await ensureIdentitySchema();
+
     if (action === "delete_fund") {
       if (!id) return res.status(400).json({ error: "id du fonds manquant" });
       await sql`DELETE FROM fund_reports WHERE fund_id = ${id}`;
@@ -25,6 +28,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       await sql`DELETE FROM funds WHERE manager_id = ${id}`;
       await sql`DELETE FROM asset_managers WHERE id = ${id}`;
+    } else if (action === "merge_funds") {
+      await mergeFunds(id, targetId);
+    } else if (action === "merge_managers") {
+      await mergeManagers(id, targetId);
     } else if (action === "wipe_all") {
       await sql`TRUNCATE analyst_overrides, assignment_rules, fund_reports, funds, asset_managers CASCADE`;
     } else {
@@ -33,7 +40,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Renvoie l'état à jour de la base pour rafraîchir l'app immédiatement
     const assetManagers = await sql`SELECT id, name, sales_contacts AS "salesContacts" FROM asset_managers`;
-    const funds = await sql`SELECT id, manager_id AS "managerId", name, analyst_id AS "analystId" FROM funds`;
+    const funds = await sql`SELECT id, manager_id AS "managerId", name, analyst_id AS "analystId", isins FROM funds`;
     const fundReports = await sql`
       SELECT id, fund_id AS "fundId", report_date AS "reportDate", cash_rate AS "cashRate",
              performance_pct AS "performancePct", aum_m AS "aumM", key_views AS "keyViews", positioning,
@@ -51,6 +58,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(200).json({ success: true, assetManagers, funds, fundReports, analystOverrides, assignmentRules });
   } catch (error: any) {
     console.error("Manage data error:", error);
-    res.status(500).json({ error: error.message || "Erreur lors de la suppression" });
+    res.status(500).json({ error: error.message || "Erreur lors de l'opération" });
   }
 }

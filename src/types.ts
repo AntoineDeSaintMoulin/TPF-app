@@ -9,6 +9,7 @@ export interface Fund {
   managerId: string;
   name: string;
   analystId: string; // "Damien" | "Maxime" | "Benoit" | "Antoine" | "Unknown"
+  isins?: string[];
 }
 
 export interface FundReport {

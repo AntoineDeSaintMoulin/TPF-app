@@ -3,7 +3,7 @@ import {
   Building2, FolderSync, TrendingUp, User, UserCheck, FileText, 
   AlertTriangle, Mail, RefreshCw, Plus, Database, Sparkles, 
   ChevronRight, Code2, CheckCircle2, Trash2, UploadCloud, X, ArrowRight,
-  Printer, Check, Edit3, HelpCircle, UserX, Loader2, XCircle, MinusCircle
+  Printer, Check, Edit3, HelpCircle, UserX, Loader2, XCircle, MinusCircle, GitMerge
 } from "lucide-react";
 import SchemaAndArch from "./components/SchemaAndArch";
 import AnalystPortal from "./components/AnalystPortal";
@@ -365,6 +365,55 @@ export default function App() {
     }
   };
 
+  // --- Fusion de doublons (fonds ou gérants) ---
+  const [mergeState, setMergeState] = useState<{ kind: "fund" | "manager"; sourceId: string } | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState<string>("");
+  const [merging, setMerging] = useState(false);
+  const [mergeError, setMergeError] = useState<string | null>(null);
+
+  const MERGE_STOPWORDS = new Set(["fund", "funds", "fonds", "sicav", "ucits", "the", "of", "de", "du", "des", "la", "le", "les", "and", "et", "asset", "management", "investment", "investments", "investors", "am", "sa", "plc", "class"]);
+  const mergeTokens = (v: string) =>
+    v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w && !MERGE_STOPWORDS.has(w));
+  const nameSimilarity = (a: string, b: string) => {
+    const ta = mergeTokens(a), tb = mergeTokens(b);
+    if (ta.join("") && ta.join("") === tb.join("")) return 1;
+    const sb = new Set(tb);
+    const common = ta.filter((w) => sb.has(w)).length;
+    return ta.length && tb.length ? common / Math.min(ta.length, tb.length) : 0;
+  };
+
+  const openMerge = (kind: "fund" | "manager", sourceId: string) => {
+    setMergeState({ kind, sourceId });
+    setMergeTargetId("");
+    setMergeError(null);
+  };
+
+  const handleConfirmMerge = async () => {
+    if (!mergeState || !mergeTargetId) return;
+    setMerging(true);
+    setMergeError(null);
+    try {
+      const res = await fetch("/api/manage-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: mergeState.kind === "fund" ? "merge_funds" : "merge_managers", id: mergeState.sourceId, targetId: mergeTargetId }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Erreur lors de la fusion");
+      setPortalData(json);
+      if (mergeState.kind === "fund") {
+        if (selectedFundId === mergeState.sourceId) setSelectedFundId(mergeTargetId);
+      } else {
+        if (selectedManagerId === mergeState.sourceId) setSelectedManagerId(mergeTargetId);
+      }
+      setMergeState(null);
+    } catch (err: any) {
+      setMergeError(err.message || "Erreur lors de la fusion");
+    } finally {
+      setMerging(false);
+    }
+  };
+
   // Delete a single fund (and its reports/overrides) directly from the dashboard
   const handleDeleteFund = async (fundId: string, fundName: string) => {
     if (!confirm(`Supprimer définitivement le fonds "${fundName}" et tous ses rapports associés ?`)) return;
@@ -580,7 +629,9 @@ export default function App() {
       case "processed":
         if (r.is_noise) return { label: `Ignoré (bruit)${r.noise_reason ? ` : ${r.noise_reason}` : ""}`, tone: "muted" };
         return {
-          label: `Enregistré → ${r.fund_name || "fonds inconnu"}${r.is_emergency ? " · ⚠️ Prioritaire" : ""}${r.api_mocked ? " (extraction simulée)" : ""}`,
+          label: `Enregistré → ${r.fund_name || "fonds inconnu"}${
+            r.fund_created ? " (nouveau fonds)" : r.matched_by === "isin" ? " (reconnu par ISIN)" : r.matched_by === "alias" ? " (reconnu par alias)" : ""
+          }${r.is_emergency ? " · ⚠️ Prioritaire" : ""}${r.api_mocked ? " (extraction simulée)" : ""}`,
           tone: r.is_emergency ? "warn" : "ok",
         };
       case "not_saved":
@@ -856,9 +907,20 @@ export default function App() {
                     <Building2 className="h-3.5 w-3.5 text-indigo-400" />
                     Niveau 1 : Les Gérants
                   </h3>
-                  <span className="bg-white/5 text-gray-300 text-[10px] font-bold px-1.5 py-0.5 rounded border border-white/5">
-                    {portalData.assetManagers.length}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {selectedManagerId && portalData.assetManagers.length > 1 && portalData.assetManagers.some((m) => m.id === selectedManagerId) && (
+                      <button
+                        onClick={() => openMerge("manager", selectedManagerId)}
+                        title="Fusionner le gérant sélectionné avec un autre (doublon)"
+                        className="text-gray-500 hover:text-indigo-300 transition-colors p-0.5 cursor-pointer"
+                      >
+                        <GitMerge className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    <span className="bg-white/5 text-gray-300 text-[10px] font-bold px-1.5 py-0.5 rounded border border-white/5">
+                      {portalData.assetManagers.length}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="space-y-2.5">
@@ -956,6 +1018,11 @@ export default function App() {
                                   <span className="shrink-0 h-2 w-2 rounded-full bg-red-500 animate-pulse mt-1" title="Alerte Prioritaire" />
                                 )}
                               </div>
+                              {fund.isins && fund.isins.length > 0 && (
+                                <p className="text-[9px] text-gray-500 font-mono mt-1 truncate" title={fund.isins.join(", ")}>
+                                  ISIN {fund.isins.join(" · ")}
+                                </p>
+                              )}
                             </button>
 
                             {/* Analyst assignment row */}
@@ -982,6 +1049,13 @@ export default function App() {
                                     Corrigé 👤
                                   </span>
                                 )}
+                                <button
+                                  onClick={() => openMerge("fund", fund.id)}
+                                  title="Fusionner ce fonds avec un autre (doublon)"
+                                  className="text-gray-600 hover:text-indigo-300 transition-colors p-0.5 cursor-pointer"
+                                >
+                                  <GitMerge className="h-3 w-3" />
+                                </button>
                                 <button
                                   onClick={() => handleDeleteFund(fund.id, fund.name)}
                                   title="Supprimer ce fonds"
@@ -1777,6 +1851,121 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* E. MERGE DUPLICATES MODAL */}
+      {mergeState && portalData && (() => {
+        const isFund = mergeState.kind === "fund";
+        const source = isFund
+          ? portalData.funds.find((f) => f.id === mergeState.sourceId)
+          : portalData.assetManagers.find((m) => m.id === mergeState.sourceId);
+        if (!source) return null;
+        const managerName = (id: string) => portalData.assetManagers.find((m) => m.id === id)?.name || "";
+        // Retire le nom du gérant avant de comparer, pour ne pas suggérer tous les fonds d'un même gérant
+        const withoutManager = (name: string, mgrId: string) => {
+          const mgrWords = new Set(mergeTokens(managerName(mgrId)));
+          return mergeTokens(name).filter((w) => !mgrWords.has(w)).join(" ");
+        };
+        const srcManagerId = isFund ? (source as Fund).managerId : "";
+        const candidates = (isFund
+          ? portalData.funds.filter((f) => f.id !== source.id).map((f) => {
+              const score = nameSimilarity(withoutManager(source.name, srcManagerId), withoutManager(f.name, f.managerId));
+              return {
+                id: f.id,
+                label: f.name,
+                sub: managerName(f.managerId),
+                // Même gérant : léger bonus pour le tri uniquement
+                score: score >= 0.5 && f.managerId === srcManagerId ? score + 0.01 : score,
+              };
+            })
+          : portalData.assetManagers.filter((m) => m.id !== source.id).map((m) => ({
+              id: m.id,
+              label: m.name,
+              sub: `${portalData.funds.filter((f) => f.managerId === m.id).length} fonds`,
+              score: nameSimilarity(source.name, m.name),
+            }))
+        ).sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
+        const suggested = candidates.filter((c) => c.score >= 0.5);
+        const others = candidates.filter((c) => c.score < 0.5);
+        const srcReports = isFund ? portalData.fundReports.filter((r) => r.fundId === source.id).length : 0;
+        const srcFunds = !isFund ? portalData.funds.filter((f) => f.managerId === source.id).length : 0;
+        const target = candidates.find((c) => c.id === mergeTargetId);
+
+        const renderOption = (c: typeof candidates[number]) => (
+          <button
+            key={c.id}
+            onClick={() => setMergeTargetId(c.id)}
+            className={`w-full text-left px-3 py-2 rounded-lg border transition-colors cursor-pointer ${
+              mergeTargetId === c.id ? "border-indigo-500 bg-indigo-500/10" : "border-white/5 bg-white/[0.02] hover:border-white/15"
+            }`}
+          >
+            <p className="text-xs text-white font-medium">{c.label}</p>
+            <p className="text-[10px] text-gray-500">{c.sub}</p>
+          </button>
+        );
+
+        return (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in" id="merge-modal">
+            <div className="bg-[#0b0e14] rounded-xl border border-white/10 shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] flex flex-col">
+              <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                <div className="flex items-center gap-2">
+                  <GitMerge className="h-5 w-5 text-indigo-400" />
+                  <h3 className="font-bold text-sm text-white">{isFund ? "Fusionner un fonds en double" : "Fusionner un gérant en double"}</h3>
+                </div>
+                <button onClick={() => setMergeState(null)} className="text-gray-400 hover:text-white hover:bg-white/5 p-1 rounded-lg transition-colors cursor-pointer">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="text-xs text-gray-400 leading-relaxed">
+                <p>
+                  <span className="text-white font-semibold">« {source.name} »</span>{" "}
+                  ({isFund ? `${srcReports} rapport(s)` : `${srcFunds} fonds`}) sera fusionné dans le {isFund ? "fonds" : "gérant"} choisi ci-dessous, puis supprimé.
+                </p>
+                <p className="mt-1 text-gray-500">
+                  {isFund
+                    ? "Ses rapports, son commentaire d'analyste et ses ISIN sont transférés. Son nom est retenu comme alias : il sera reconnu automatiquement à l'avenir."
+                    : "Ses fonds et ses contacts sont transférés. Son nom est retenu comme alias : il sera reconnu automatiquement à l'avenir."}
+                </p>
+              </div>
+
+              <div className="overflow-y-auto flex-1 min-h-0 space-y-3 pr-1">
+                {suggested.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-indigo-300 font-bold">Doublons probables</p>
+                    {suggested.map(renderOption)}
+                  </div>
+                )}
+                {others.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">{suggested.length ? "Autres" : `Tous les ${isFund ? "fonds" : "gérants"}`}</p>
+                    {others.map(renderOption)}
+                  </div>
+                )}
+                {candidates.length === 0 && <p className="text-xs text-gray-500">Aucun autre {isFund ? "fonds" : "gérant"} disponible.</p>}
+              </div>
+
+              {mergeError && <p className="text-xs text-rose-400">{mergeError}</p>}
+
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-white/5">
+                <button
+                  onClick={() => setMergeState(null)}
+                  className="bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs px-4 py-2 rounded-lg transition-colors cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={handleConfirmMerge}
+                  disabled={!mergeTargetId || merging}
+                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs px-4 py-2 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  {merging && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {target ? `Fusionner dans « ${target.label} »` : "Choisir la cible"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* C. INTEL ASSIGNMENT / ATTRIBUTION RULE MODAL */}
       {assignmentFundId && (
