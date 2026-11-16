@@ -24,3 +24,14 @@
   animation: fadeIn 0.4s ease-out forwards;
 }
 
+
+/* Évite le zoom automatique de Safari iOS quand on touche un champ de saisie :
+   Safari zoome si le texte du champ fait moins de 16 px. Sur écran tactile, on force 16 px.
+   (Règle hors @layer : elle prime sur les classes Tailwind comme text-xs.) */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
