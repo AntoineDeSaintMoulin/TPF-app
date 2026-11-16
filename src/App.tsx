@@ -505,50 +505,64 @@ export default function App() {
   };
 
   // Delete a single fund (and its reports/overrides) directly from the dashboard
-  const handleDeleteFund = async (fundId: string, fundName: string) => {
+  // Suppression avec fenêtre de confirmation (évite les suppressions par erreur)
+  const [deleteRequest, setDeleteRequest] = useState<{ kind: "fund" | "manager"; id: string; name: string; details: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleDeleteFund = (fundId: string, fundName: string) => {
     const nbReports = portalData?.fundReports.filter((r) => r.fundId === fundId).length || 0;
-    if (!confirm(`Supprimer définitivement le fonds « ${fundName} » ?\n\n${nbReports} rapport(s) et le commentaire d'analyste seront aussi supprimés. Cette action est irréversible.`)) return;
-    try {
-      const res = await fetch("/api/manage-data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete_fund", id: fundId })
-      });
-      const json = await res.json().catch(() => ({ error: `Réponse invalide du serveur (HTTP ${res.status})` }));
-      if (!res.ok || !json.success) throw new Error(json.error || "Suppression impossible");
-      setPortalData(json);
-      if (selectedFundId === fundId) setSelectedFundId(null);
-    } catch (err: any) {
-      console.error("Error deleting fund:", err);
-      alert(`Le fonds n'a pas pu être supprimé : ${err.message}`);
-    }
+    setDeleteError(null);
+    setDeleteRequest({
+      kind: "fund",
+      id: fundId,
+      name: fundName,
+      details: `${nbReports} rapport(s) et le commentaire d'analyste de ce fonds seront aussi supprimés.`,
+    });
   };
 
-  // Supprime un gérant, tous ses fonds et leurs rapports
-  const handleDeleteManager = async (managerId: string) => {
+  const handleDeleteManager = (managerId: string) => {
     if (!portalData) return;
     const mgr = portalData.assetManagers.find((m) => m.id === managerId);
     if (!mgr) return;
     const mgrFunds = portalData.funds.filter((f) => f.managerId === managerId);
     const nbReports = portalData.fundReports.filter((r) => mgrFunds.some((f) => f.id === r.fundId)).length;
-    if (!confirm(`Supprimer définitivement le gérant « ${mgr.name} » ?\n\n${mgrFunds.length} fonds et ${nbReports} rapport(s) seront aussi supprimés. Cette action est irréversible.`)) return;
+    setDeleteError(null);
+    setDeleteRequest({
+      kind: "manager",
+      id: managerId,
+      name: mgr.name,
+      details: `${mgrFunds.length} fonds et ${nbReports} rapport(s) de ce gérant seront aussi supprimés.`,
+    });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteRequest) return;
+    const { kind, id } = deleteRequest;
+    setDeleting(true);
+    setDeleteError(null);
     try {
       const res = await fetch("/api/manage-data", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete_manager", id: managerId })
+        body: JSON.stringify({ action: kind === "fund" ? "delete_fund" : "delete_manager", id })
       });
       const json = await res.json().catch(() => ({ error: `Réponse invalide du serveur (HTTP ${res.status})` }));
       if (!res.ok || !json.success) throw new Error(json.error || "Suppression impossible");
       setPortalData(json);
-      if (selectedManagerId === managerId) {
+      if (kind === "fund") {
+        if (selectedFundId === id) setSelectedFundId(null);
+      } else if (selectedManagerId === id) {
         const next = json.assetManagers?.[0];
         setSelectedManagerId(next?.id || "");
         setSelectedFundId(next ? json.funds.find((f: Fund) => f.managerId === next.id)?.id || null : null);
       }
+      setDeleteRequest(null);
     } catch (err: any) {
-      console.error("Error deleting manager:", err);
-      alert(`Le gérant n'a pas pu être supprimé : ${err.message}`);
+      console.error("Error deleting:", err);
+      setDeleteError(err.message || "Suppression impossible");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -1062,8 +1076,13 @@ export default function App() {
                     const mgrFundsCount = portalData.funds.filter(f => f.managerId === mgr.id).length;
                     const isSelected = selectedManagerId === mgr.id;
                     return (
-                      <div key={mgr.id}>
-                      <button
+                      <div
+                        key={mgr.id}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") (e.currentTarget as HTMLElement).click();
+                        }}
                         onClick={() => {
                           setSelectedManagerId(mgr.id);
                           // Auto select first fund of this manager
@@ -1092,27 +1111,18 @@ export default function App() {
                           }`}>
                             {mgrFundsCount} f.
                           </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteManager(mgr.id);
+                            }}
+                            title="Supprimer ce gérant"
+                            className="text-gray-600 hover:text-red-400 transition-colors p-0.5 cursor-pointer"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
                           <ChevronRight className={`h-3.5 w-3.5 transition-transform ${isSelected ? "text-indigo-400 translate-x-0.5" : "text-gray-500"}`} />
                         </div>
-                      </button>
-                      {isSelected && (
-                        <div className="flex items-center justify-end gap-3 px-1 pt-1.5 text-[10px]">
-                          {portalData.assetManagers.length > 1 && (
-                            <button
-                              onClick={() => openMerge("manager", mgr.id)}
-                              className="flex items-center gap-1 text-gray-500 hover:text-indigo-300 transition-colors cursor-pointer"
-                            >
-                              <GitMerge className="h-3 w-3" /> Fusionner
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleDeleteManager(mgr.id)}
-                            className="flex items-center gap-1 text-gray-500 hover:text-red-400 transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="h-3 w-3" /> Supprimer le gérant
-                          </button>
-                        </div>
-                      )}
                       </div>
                     );
                   })}
@@ -1359,14 +1369,6 @@ export default function App() {
                           >
                             {onepagerGenerating ? <Loader2 className="h-3.5 w-3.5 text-gray-400 animate-spin" /> : <FileText className="h-3.5 w-3.5 text-blue-400" />}
                             {onepagerGenerating ? "Génération du Word…" : "Exporter One-Pager (Word)"}
-                          </button>
-                          <button
-                            onClick={() => handleDeleteFund(selectedFund.id, selectedFund.name)}
-                            title="Supprimer ce fonds et ses rapports"
-                            className="bg-white/5 hover:bg-red-500/10 text-gray-400 hover:text-red-300 font-semibold text-[11px] px-3 py-2 rounded-lg border border-white/10 hover:border-red-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Supprimer
                           </button>
                         </div>
                       </div>
@@ -2295,6 +2297,50 @@ export default function App() {
           </div>
         );
       })()}
+
+      {/* F. DELETE CONFIRMATION MODAL */}
+      {deleteRequest && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in" id="delete-modal">
+          <div className="bg-[#0b0e14] rounded-xl border border-red-500/30 shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center gap-2.5">
+              <div className="h-9 w-9 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center shrink-0">
+                <Trash2 className="h-4 w-4 text-red-400" />
+              </div>
+              <h3 className="font-bold text-sm text-white">
+                {deleteRequest.kind === "fund" ? "Supprimer ce fonds ?" : "Supprimer ce gérant ?"}
+              </h3>
+            </div>
+            <div className="text-xs text-gray-300 space-y-2 leading-relaxed">
+              <p>
+                Tu es sur le point de supprimer {deleteRequest.kind === "fund" ? "le fonds" : "le gérant"}{" "}
+                <strong className="text-white">« {deleteRequest.name} »</strong>.
+              </p>
+              <p className="text-gray-400">{deleteRequest.details}</p>
+              <p className="text-red-300 font-semibold">Cette action est définitive et ne peut pas être annulée.</p>
+              <p className="text-gray-500 text-[11px]">S'il s'agit d'un doublon, préfère la fusion : les rapports sont conservés.</p>
+            </div>
+            {deleteError && <p className="text-[11px] text-rose-400">{deleteError}</p>}
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-white/5">
+              <button
+                onClick={() => setDeleteRequest(null)}
+                disabled={deleting}
+                autoFocus
+                className="bg-white/5 hover:bg-white/10 text-gray-200 font-bold text-xs px-4 py-2 rounded-lg transition-colors cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleting}
+                className="bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-bold text-xs px-4 py-2 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                {deleting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Oui, supprimer définitivement
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* C. INTEL ASSIGNMENT / ATTRIBUTION RULE MODAL */}
       {assignmentFundId && (
