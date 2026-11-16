@@ -1,5 +1,6 @@
 import { getDb } from "./_db.js";
 import { findOrCreateManager, findOrCreateFund, attachToFund } from "./_identity.js";
+import { cleanText, cleanDeep } from "./_text.js";
 
 export async function getAutoAssignedAnalyst(fundName: string): Promise<string> {
   const sql = getDb();
@@ -14,6 +15,11 @@ export async function getAutoAssignedAnalyst(fundName: string): Promise<string> 
 
 // targetFundId : fonds choisi manuellement (page d'ingestion). Sinon, rapprochement automatique.
 export async function saveExtractedReport(data: any, subject: string, body: string, targetFundId?: string): Promise<{ saved: boolean; reason?: string; fundId?: string; fundName?: string; fundCreated?: boolean; matchedBy?: string }> {
+  // Retire les caractères refusés par Postgres (ex. octet nul présent dans certains PDF)
+  data = cleanDeep(data);
+  subject = cleanText(subject || "");
+  body = cleanText(body || "");
+
   const sql = getDb();
 
   // Rapprochement gérant / fonds (ISIN, proposition de Gemini, alias, nom normalisé) — voir _identity.ts

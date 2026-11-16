@@ -66,11 +66,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const msg = messages[i];
       const id = msg.id as string;
 
+      // Infos affichées dans le détail de chaque email (modal de suivi)
+      const info: { from?: string; date?: string; bodyChars?: number; stage: string } = { stage: "lecture de l'email" };
+      let subject = "";
+      let attachmentsInfo: { filename: string; status: string }[] = [];
+      let started = false;
+
       const pushResult = (result: any) => {
-        results.push(result);
-        emit({ type: "email_result", index: i, result });
+        const full = { ...info, attachments: attachmentsInfo, ...result };
+        results.push(full);
+        emit({ type: "email_result", index: i, result: full });
       };
 
+      try {
       const fullMsg = await gmail.users.messages.get({
         userId: "me",
         id,
@@ -78,8 +86,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
 
       const headers = fullMsg.data.payload?.headers || [];
-      const subject = getHeader(headers, "Subject");
+      subject = getHeader(headers, "Subject");
+      info.from = getHeader(headers, "From");
+      info.date = getHeader(headers, "Date");
       emit({ type: "email_start", index: i, total: messages.length, id, subject });
+      started = true;
 
       const emailBody = extractPlainTextBody(fullMsg.data.payload);
 
@@ -87,9 +98,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const pdfRefs = findPdfAttachments(fullMsg.data.payload);
       const attachmentTexts: string[] = [];
       const scannedPdfs: PdfFileForAi[] = [];
-      const attachmentsInfo: { filename: string; status: string }[] = [];
+      attachmentsInfo = [];
       let inlineBytes = 0;
 
+      info.stage = "lecture des pièces jointes";
       if (pdfRefs.length > 0) {
         emit({ type: "email_step", index: i, message: `Lecture de ${pdfRefs.length} pièce(s) jointe(s) PDF…` });
       }
@@ -121,30 +133,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const body = (emailBody || "") + attachmentTexts.join("");
+      info.bodyChars = body.length;
 
       if (body.trim().length === 0 && scannedPdfs.length === 0) {
-        pushResult({ id, subject, status: "skipped_empty_body", attachments: attachmentsInfo });
+        pushResult({ id, subject, status: "skipped_empty_body" });
         continue;
       }
 
+      info.stage = "analyse par l'IA (Gemini)";
       emit({ type: "email_step", index: i, message: "Analyse par l'IA (Gemini)…" });
       let extraction;
       try {
         extraction = await runExtraction(subject, body, scannedPdfs);
       } catch (err: any) {
-        pushResult({ id, subject, status: "extraction_failed", error: err.message, attachments: attachmentsInfo });
+        pushResult({ id, subject, status: "extraction_failed", error: err.message });
         continue;
       }
 
+      info.stage = "enregistrement en base de données";
       emit({ type: "email_step", index: i, message: "Enregistrement en base de données…" });
       let saveResult: Awaited<ReturnType<typeof saveExtractedReport>>;
       try {
         saveResult = await saveExtractedReport(extraction.raw_extraction, subject, body);
       } catch (err: any) {
-        pushResult({ id, subject, status: "save_failed", error: err.message, attachments: attachmentsInfo });
+        pushResult({ id, subject, status: "save_failed", error: err.message });
         continue;
       }
 
+      info.stage = "marquage comme lu dans Gmail";
       emit({ type: "email_step", index: i, message: "Marquage de l'email comme lu…" });
       await gmail.users.messages.modify({
         userId: "me",
@@ -162,8 +178,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         matched_by: saveResult.matchedBy,
         is_emergency: extraction.raw_extraction.is_emergency,
         api_mocked: extraction.api_mocked,
-        attachments: attachmentsInfo,
+        stage: "terminé",
       });
+      } catch (err: any) {
+        // Erreur inattendue sur cet email : on la signale et on passe au suivant
+        console.error(`Erreur sur l'email ${id}:`, err);
+        if (!started) emit({ type: "email_start", index: i, total: messages.length, id, subject: subject || "(email illisible)" });
+        pushResult({ id, subject, status: "failed", error: err?.message || String(err) });
+      }
     }
 
     if (streaming) {

@@ -3,7 +3,7 @@ import {
   Building2, FolderSync, TrendingUp, User, UserCheck, FileText, 
   AlertTriangle, Mail, RefreshCw, Plus, Database, Sparkles, 
   ChevronRight, Code2, CheckCircle2, Trash2, UploadCloud, X, ArrowRight,
-  Printer, Check, Edit3, HelpCircle, UserX, Loader2, XCircle, MinusCircle, GitMerge, Send
+  Printer, Check, Edit3, HelpCircle, UserX, Loader2, XCircle, MinusCircle, GitMerge, Send, ChevronDown, ExternalLink, Copy
 } from "lucide-react";
 import SchemaAndArch from "./components/SchemaAndArch";
 import AnalystPortal from "./components/AnalystPortal";
@@ -640,6 +640,7 @@ export default function App() {
     setSyncPhase("running");
     setSyncLog([]);
     setSyncEmails([]);
+    setExpandedSyncIndex(null);
     setSyncTotal(null);
     setSyncStartedAt(Date.now());
     setSyncElapsed(0);
@@ -668,7 +669,7 @@ export default function App() {
           finished = true;
           const results = ev.results || [];
           const ok = results.filter((r: any) => r.status === "processed").length;
-          const failed = results.filter((r: any) => r.status === "extraction_failed" || r.status === "save_failed").length;
+          const failed = results.filter((r: any) => r.status === "extraction_failed" || r.status === "save_failed" || r.status === "failed").length;
           const skipped = results.filter((r: any) => r.status === "skipped_empty_body" || r.status === "not_saved").length;
           if (results.length > 0) {
             addSyncLog(
@@ -757,6 +758,36 @@ export default function App() {
     }
   };
 
+  const [expandedSyncIndex, setExpandedSyncIndex] = useState<number | null>(null);
+
+  // Explication en clair d'une erreur de synchro, et quoi faire
+  const explainSyncError = (r: any): { cause: string; action: string } | null => {
+    const msg = String(r.error || r.reason || "");
+    if (r.status === "processed") return null;
+    if (/0x00|invalid byte sequence/i.test(msg))
+      return {
+        cause: "Le texte extrait d'une pièce jointe PDF contient des caractères invisibles (octet nul) que la base de données refuse d'enregistrer.",
+        action: "Ces caractères sont maintenant retirés automatiquement. L'email est resté non lu : relance la synchro pour le traiter.",
+      };
+    if (/503|saturé|UNAVAILABLE|high demand|overloaded/i.test(msg))
+      return { cause: "Les serveurs de Gemini étaient saturés, même après plusieurs tentatives.", action: "Erreur temporaire côté Google. L'email est resté non lu : relance la synchro dans quelques minutes." };
+    if (/429|quota|RESOURCE_EXHAUSTED|rate/i.test(msg))
+      return { cause: "Le quota d'appels à Gemini est atteint.", action: "Attends le renouvellement du quota (le compteur est en haut de l'app) puis relance la synchro." };
+    if (/JSON valide|JSON/i.test(msg) && r.status === "extraction_failed")
+      return { cause: "La réponse de Gemini était illisible (document probablement trop long ou trop complexe).", action: "Relance la synchro ; si l'erreur persiste, importe le document via la page Ingestion." };
+    if (/API key|PERMISSION_DENIED|401|403/i.test(msg) && r.status === "extraction_failed")
+      return { cause: "La clé Gemini est refusée.", action: "Vérifie la variable TPF_AI_Key dans Vercel." };
+    if (r.status === "not_saved")
+      return { cause: `L'IA a lu l'email mais n'a pas pu le rattacher : ${r.reason || "informations insuffisantes"}.`, action: "L'email a été marqué comme lu. Tu peux l'importer via la page Ingestion et choisir le fonds à la main." };
+    if (r.status === "skipped_empty_body")
+      return { cause: "L'email ne contient ni texte lisible ni pièce jointe PDF.", action: "Vérifie dans Gmail si le contenu est dans une pièce jointe d'un autre format (Word, image…)." };
+    if (r.status === "save_failed")
+      return { cause: "L'IA a bien analysé l'email, mais l'enregistrement en base de données a échoué.", action: "L'email est resté non lu : relance la synchro. Si l'erreur persiste, envoie-moi le message technique ci-dessous." };
+    if (r.status === "extraction_failed")
+      return { cause: "L'analyse par l'IA a échoué.", action: "L'email est resté non lu : relance la synchro. Si l'erreur persiste, envoie-moi le message technique ci-dessous." };
+    return { cause: "Erreur inattendue pendant le traitement de cet email.", action: "Relance la synchro. Si l'erreur persiste, envoie-moi le message technique ci-dessous." };
+  };
+
   const describeSyncResult = (r: any): { label: string; tone: "ok" | "warn" | "err" | "muted" } => {
     switch (r.status) {
       case "processed":
@@ -775,6 +806,8 @@ export default function App() {
         return { label: `Échec de l'analyse IA : ${r.error}`, tone: "err" };
       case "save_failed":
         return { label: `Échec de l'enregistrement : ${r.error}`, tone: "err" };
+      case "failed":
+        return { label: `Échec : ${r.error}`, tone: "err" };
       default:
         return { label: r.status, tone: "muted" };
     }
@@ -2131,26 +2164,87 @@ export default function App() {
               <div className="space-y-1.5 overflow-y-auto flex-1 min-h-0 pr-1">
                 {syncEmails.map((e) => {
                   const d = e.result ? describeSyncResult(e.result) : null;
+                  const r = e.result;
+                  const isOpen = expandedSyncIndex === e.index && !!r;
+                  const explain = r ? explainSyncError(r) : null;
+                  const technical = r?.error || r?.reason || "";
                   return (
-                    <div key={e.index} className="flex items-start gap-2.5 bg-white/[0.02] border border-white/5 rounded-lg px-3 py-2">
-                      <div className="pt-0.5 shrink-0">
-                        {!d && <Loader2 className="h-3.5 w-3.5 text-indigo-400 animate-spin" />}
-                        {d?.tone === "ok" && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
-                        {d?.tone === "warn" && <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />}
-                        {d?.tone === "err" && <XCircle className="h-3.5 w-3.5 text-rose-400" />}
-                        {d?.tone === "muted" && <MinusCircle className="h-3.5 w-3.5 text-gray-500" />}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs text-white font-medium truncate" title={e.subject}>{e.subject}</p>
-                        <p className={`text-[11px] break-words ${!d ? "text-indigo-300" : d.tone === "err" ? "text-rose-300" : d.tone === "warn" ? "text-amber-300" : d.tone === "ok" ? "text-emerald-300" : "text-gray-500"}`}>
-                          {d ? d.label : e.step}
-                        </p>
-                        {e.result?.attachments?.length > 0 && (
-                          <p className="text-[10px] text-gray-500 mt-0.5 break-words">
-                            📎 {e.result.attachments.map((a: any) => `${a.filename} (${a.status})`).join(" · ")}
+                    <div key={e.index} className={`bg-white/[0.02] border rounded-lg transition-colors ${isOpen ? "border-white/15" : "border-white/5"} ${d?.tone === "err" ? "hover:border-rose-500/30" : "hover:border-white/15"}`}>
+                      <button
+                        type="button"
+                        disabled={!r}
+                        onClick={() => setExpandedSyncIndex(isOpen ? null : e.index)}
+                        className="w-full flex items-start gap-2.5 px-3 py-2 text-left cursor-pointer disabled:cursor-default"
+                      >
+                        <div className="pt-0.5 shrink-0">
+                          {!d && <Loader2 className="h-3.5 w-3.5 text-indigo-400 animate-spin" />}
+                          {d?.tone === "ok" && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
+                          {d?.tone === "warn" && <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />}
+                          {d?.tone === "err" && <XCircle className="h-3.5 w-3.5 text-rose-400" />}
+                          {d?.tone === "muted" && <MinusCircle className="h-3.5 w-3.5 text-gray-500" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs text-white font-medium truncate" title={e.subject}>{e.subject}</p>
+                          <p className={`text-[11px] break-words ${!d ? "text-indigo-300" : d.tone === "err" ? "text-rose-300" : d.tone === "warn" ? "text-amber-300" : d.tone === "ok" ? "text-emerald-300" : "text-gray-500"}`}>
+                            {d ? d.label : e.step}
                           </p>
+                          {r?.attachments?.length > 0 && (
+                            <p className="text-[10px] text-gray-500 mt-0.5 break-words">
+                              📎 {r.attachments.map((a: any) => `${a.filename} (${a.status})`).join(" · ")}
+                            </p>
+                          )}
+                        </div>
+                        {r && (
+                          <span className="shrink-0 flex items-center gap-1 text-[10px] text-gray-500 pt-0.5">
+                            {d?.tone === "err" && !isOpen && <span className="hidden sm:inline">Détails</span>}
+                            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                          </span>
                         )}
-                      </div>
+                      </button>
+
+                      {isOpen && (
+                        <div className="px-3 pb-3 pt-1 ml-6 space-y-2.5 text-[11px] border-t border-white/5">
+                          {explain && (
+                            <div className={`rounded-lg p-2.5 space-y-1 ${d?.tone === "err" ? "bg-rose-500/5 border border-rose-500/15" : "bg-amber-500/5 border border-amber-500/15"}`}>
+                              <p className="text-gray-200"><span className="font-semibold text-white">Ce qui s'est passé : </span>{explain.cause}</p>
+                              <p className="text-gray-300"><span className="font-semibold text-white">Que faire : </span>{explain.action}</p>
+                            </div>
+                          )}
+                          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-gray-400">
+                            {r.from && (<><dt className="text-gray-500">Expéditeur</dt><dd className="text-gray-300 break-words">{r.from}</dd></>)}
+                            {r.date && (<><dt className="text-gray-500">Reçu le</dt><dd className="text-gray-300">{(() => { const t = new Date(r.date); return isNaN(t.getTime()) ? r.date : t.toLocaleString("fr-FR"); })()}</dd></>)}
+                            {r.status !== "processed" && r.stage && (<><dt className="text-gray-500">Étape en échec</dt><dd className="text-gray-300">{r.stage}</dd></>)}
+                            {typeof r.bodyChars === "number" && (<><dt className="text-gray-500">Texte lu</dt><dd className="text-gray-300">{r.bodyChars.toLocaleString("fr-FR")} caractères (email + PDF)</dd></>)}
+                            {r.attachments?.length > 0 && (<><dt className="text-gray-500">Pièces jointes</dt><dd className="text-gray-300 break-words">{r.attachments.map((a: any) => `${a.filename} — ${a.status}`).join(" ; ")}</dd></>)}
+                            {r.status === "processed" && r.fund_name && (<><dt className="text-gray-500">Fonds</dt><dd className="text-gray-300">{r.fund_name}</dd></>)}
+                          </dl>
+                          {technical && (
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-500">Message technique</span>
+                                <button
+                                  type="button"
+                                  onClick={() => navigator.clipboard?.writeText(technical).catch(() => {})}
+                                  className="flex items-center gap-1 text-gray-500 hover:text-gray-200 cursor-pointer"
+                                >
+                                  <Copy className="h-3 w-3" /> Copier
+                                </button>
+                              </div>
+                              <pre className="bg-[#050608] border border-white/5 rounded p-2 text-[10px] text-gray-400 font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto">{technical}</pre>
+                            </div>
+                          )}
+                          {r.id && (
+                            <a
+                              href={`https://mail.google.com/mail/u/0/#all/${r.id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-indigo-300 hover:text-indigo-200"
+                            >
+                              <ExternalLink className="h-3 w-3" /> Ouvrir l'email dans Gmail
+                            </a>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
