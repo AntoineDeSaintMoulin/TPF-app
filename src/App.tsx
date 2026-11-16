@@ -506,20 +506,49 @@ export default function App() {
 
   // Delete a single fund (and its reports/overrides) directly from the dashboard
   const handleDeleteFund = async (fundId: string, fundName: string) => {
-    if (!confirm(`Supprimer définitivement le fonds "${fundName}" et tous ses rapports associés ?`)) return;
+    const nbReports = portalData?.fundReports.filter((r) => r.fundId === fundId).length || 0;
+    if (!confirm(`Supprimer définitivement le fonds « ${fundName} » ?\n\n${nbReports} rapport(s) et le commentaire d'analyste seront aussi supprimés. Cette action est irréversible.`)) return;
     try {
       const res = await fetch("/api/manage-data", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "delete_fund", id: fundId })
       });
-      const json = await res.json();
-      if (json.success) {
-        setPortalData(json);
-        if (selectedFundId === fundId) setSelectedFundId(null);
-      }
-    } catch (err) {
+      const json = await res.json().catch(() => ({ error: `Réponse invalide du serveur (HTTP ${res.status})` }));
+      if (!res.ok || !json.success) throw new Error(json.error || "Suppression impossible");
+      setPortalData(json);
+      if (selectedFundId === fundId) setSelectedFundId(null);
+    } catch (err: any) {
       console.error("Error deleting fund:", err);
+      alert(`Le fonds n'a pas pu être supprimé : ${err.message}`);
+    }
+  };
+
+  // Supprime un gérant, tous ses fonds et leurs rapports
+  const handleDeleteManager = async (managerId: string) => {
+    if (!portalData) return;
+    const mgr = portalData.assetManagers.find((m) => m.id === managerId);
+    if (!mgr) return;
+    const mgrFunds = portalData.funds.filter((f) => f.managerId === managerId);
+    const nbReports = portalData.fundReports.filter((r) => mgrFunds.some((f) => f.id === r.fundId)).length;
+    if (!confirm(`Supprimer définitivement le gérant « ${mgr.name} » ?\n\n${mgrFunds.length} fonds et ${nbReports} rapport(s) seront aussi supprimés. Cette action est irréversible.`)) return;
+    try {
+      const res = await fetch("/api/manage-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete_manager", id: managerId })
+      });
+      const json = await res.json().catch(() => ({ error: `Réponse invalide du serveur (HTTP ${res.status})` }));
+      if (!res.ok || !json.success) throw new Error(json.error || "Suppression impossible");
+      setPortalData(json);
+      if (selectedManagerId === managerId) {
+        const next = json.assetManagers?.[0];
+        setSelectedManagerId(next?.id || "");
+        setSelectedFundId(next ? json.funds.find((f: Fund) => f.managerId === next.id)?.id || null : null);
+      }
+    } catch (err: any) {
+      console.error("Error deleting manager:", err);
+      alert(`Le gérant n'a pas pu être supprimé : ${err.message}`);
     }
   };
 
@@ -1033,8 +1062,8 @@ export default function App() {
                     const mgrFundsCount = portalData.funds.filter(f => f.managerId === mgr.id).length;
                     const isSelected = selectedManagerId === mgr.id;
                     return (
+                      <div key={mgr.id}>
                       <button
-                        key={mgr.id}
                         onClick={() => {
                           setSelectedManagerId(mgr.id);
                           // Auto select first fund of this manager
@@ -1066,6 +1095,25 @@ export default function App() {
                           <ChevronRight className={`h-3.5 w-3.5 transition-transform ${isSelected ? "text-indigo-400 translate-x-0.5" : "text-gray-500"}`} />
                         </div>
                       </button>
+                      {isSelected && (
+                        <div className="flex items-center justify-end gap-3 px-1 pt-1.5 text-[10px]">
+                          {portalData.assetManagers.length > 1 && (
+                            <button
+                              onClick={() => openMerge("manager", mgr.id)}
+                              className="flex items-center gap-1 text-gray-500 hover:text-indigo-300 transition-colors cursor-pointer"
+                            >
+                              <GitMerge className="h-3 w-3" /> Fusionner
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeleteManager(mgr.id)}
+                            className="flex items-center gap-1 text-gray-500 hover:text-red-400 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="h-3 w-3" /> Supprimer le gérant
+                          </button>
+                        </div>
+                      )}
+                      </div>
                     );
                   })}
                 </div>
@@ -1311,6 +1359,14 @@ export default function App() {
                           >
                             {onepagerGenerating ? <Loader2 className="h-3.5 w-3.5 text-gray-400 animate-spin" /> : <FileText className="h-3.5 w-3.5 text-blue-400" />}
                             {onepagerGenerating ? "Génération du Word…" : "Exporter One-Pager (Word)"}
+                          </button>
+                          <button
+                            onClick={() => handleDeleteFund(selectedFund.id, selectedFund.name)}
+                            title="Supprimer ce fonds et ses rapports"
+                            className="bg-white/5 hover:bg-red-500/10 text-gray-400 hover:text-red-300 font-semibold text-[11px] px-3 py-2 rounded-lg border border-white/10 hover:border-red-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Supprimer
                           </button>
                         </div>
                       </div>
